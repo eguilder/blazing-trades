@@ -1,0 +1,6 @@
+# LibreOffice lock files
+.~lock*
+
+# temporary files
+*.tmp
+*.bak

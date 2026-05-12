@@ -107,6 +107,29 @@
       font-size: 12px;
     }
 
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    th {
+      background: #1e293b;
+      padding: 12px;
+      text-align: left;
+    }
+
+    td {
+      padding: 12px;
+      border-bottom:
+        1px solid rgba(255,255,255,0.08);
+    }
+
+    tr:hover {
+      background:
+        rgba(255,255,255,0.03);
+    }
+
   </style>
 
 </head>
@@ -120,6 +143,10 @@
     forward implied move analysis
     for monthly options expiration.
   </p>
+
+  <!-- ==================================================== -->
+  <!-- CSV UPLOAD -->
+  <!-- ==================================================== -->
 
   <div class="upload-box">
 
@@ -138,11 +165,59 @@
 
   </div>
 
+  <!-- ==================================================== -->
+  <!-- SUMMARY TABLE -->
+  <!-- ==================================================== -->
+
+  <div class="chart-card">
+
+    <h3 style="margin-top:0;">
+      Market Summary
+    </h3>
+
+    <table id="summaryTable">
+
+      <thead>
+
+        <tr>
+
+          <th>Ticker</th>
+
+          <th>Spot</th>
+
+          <th>Avg Hist Range %</th>
+
+          <th>Fwd Expected Move</th>
+
+          <th>Put Wall</th>
+
+          <th>Call Wall</th>
+
+        </tr>
+
+      </thead>
+
+      <tbody>
+
+      </tbody>
+
+    </table>
+
+  </div>
+
+  <!-- ==================================================== -->
+  <!-- CONTROLS -->
+  <!-- ==================================================== -->
+
   <div class="controls">
 
     <select id="tickerSelect"></select>
 
   </div>
+
+  <!-- ==================================================== -->
+  <!-- STATS -->
+  <!-- ==================================================== -->
 
   <div class="stats-grid">
 
@@ -200,6 +275,10 @@
 
   </div>
 
+  <!-- ==================================================== -->
+  <!-- CHART -->
+  <!-- ==================================================== -->
+
   <div class="chart-card">
 
     <div id="rangeChart"></div>
@@ -248,9 +327,6 @@
           ticker: row.ticker,
           opex_date: row.opex_date,
           data_type: row.data_type,
-
-          week_open:
-            parseFloat(row.week_open),
 
           week_high:
             parseFloat(row.week_high),
@@ -301,11 +377,6 @@
           implied_lower:
             parseFloat(
               row.implied_lower
-            ),
-
-          iv_percent:
-            parseFloat(
-              row.iv_percent
             ),
 
           high_oi_put_strike:
@@ -370,6 +441,8 @@
 
     function initializeDashboard() {
 
+      buildSummaryTable();
+
       const tickerSelect =
         document.getElementById(
           "tickerSelect"
@@ -411,6 +484,105 @@
       updateDashboard(
         tickers[0]
       );
+    }
+
+    // ======================================================
+    // SUMMARY TABLE
+    // ======================================================
+
+    function buildSummaryTable() {
+
+      const tbody =
+        document.querySelector(
+          "#summaryTable tbody"
+        );
+
+      tbody.innerHTML = "";
+
+      const tickers = [
+
+        ...new Set(
+          globalData.map(
+            d => d.ticker
+          )
+        )
+      ];
+
+      tickers.forEach(ticker => {
+
+        const tickerData =
+          globalData.filter(
+            d => d.ticker === ticker
+          );
+
+        const historical =
+          tickerData.filter(
+            d => d.data_type === "historical"
+          );
+
+        const future =
+          tickerData.find(
+            d => d.data_type === "future"
+          );
+
+        const avgRange =
+          average(
+            historical.map(
+              d => d.range_percent
+            )
+          ).toFixed(2);
+
+        const row =
+          document.createElement("tr");
+
+        row.innerHTML = `
+
+          <td>
+            <strong>${ticker}</strong>
+          </td>
+
+          <td>
+            ${
+              future
+                ? future.spot_price.toFixed(2)
+                : "-"
+            }
+          </td>
+
+          <td>
+            ${avgRange}%
+          </td>
+
+          <td>
+            ${
+              future
+                ? `±${future.expected_move.toFixed(2)}
+                   (${future.expected_move_percent.toFixed(2)}%)`
+                : "-"
+            }
+          </td>
+
+          <td style="color:#22c55e;">
+            ${
+              future &&
+              future.high_oi_put_strike
+                ? future.high_oi_put_strike
+                : "-"
+            }
+          </td>
+
+          <td style="color:#ef4444;">
+            ${
+              future &&
+              future.high_oi_call_strike
+                ? future.high_oi_call_strike
+                : "-"
+            }
+          </td>
+        `;
+
+        tbody.appendChild(row);
+      });
     }
 
     // ======================================================
@@ -516,10 +688,6 @@
 
       const traces = [];
 
-      // ====================================================
-      // HISTORICAL RANGE
-      // ====================================================
-
       const historicalTrace = {
 
         x: historical.map(
@@ -559,21 +727,12 @@
           width: 0
         },
 
-        hovertemplate:
-          "<b>%{x}</b><br>"
-          + "High: %{y:.2f}<br>"
-          + "<extra></extra>",
-
         name: "Historical Range"
       };
 
       traces.push(
         historicalTrace
       );
-
-      // ====================================================
-      // HISTORICAL CLOSES
-      // ====================================================
 
       const closeTrace = {
 
@@ -608,13 +767,7 @@
         name: "Expiration Close"
       };
 
-      traces.push(
-        closeTrace
-      );
-
-      // ====================================================
-      // FUTURE IMPLIED RANGE
-      // ====================================================
+      traces.push(closeTrace);
 
       if (future) {
 
@@ -661,8 +814,8 @@
             + "Expected Move: "
             + future.expected_move
             + "<br>"
-            + "IV: "
-            + future.iv_percent
+            + "Expected Move %: "
+            + future.expected_move_percent
             + "%"
             + "<extra></extra>",
 
@@ -672,10 +825,6 @@
         traces.push(
           impliedTrace
         );
-
-        // ==================================================
-        // CURRENT SPOT
-        // ==================================================
 
         const spotTrace = {
 
@@ -709,10 +858,6 @@
         );
       }
 
-      // ====================================================
-      // LAYOUT
-      // ====================================================
-
       const layout = {
 
         title: {
@@ -744,28 +889,16 @@
           title:
             "Monthly OPEX",
 
-          tickangle: -45,
-
-          gridcolor:
-            "rgba(255,255,255,0.08)"
+          tickangle: -45
         },
 
         yaxis: {
 
           title:
-            "Underlying Price",
-
-          gridcolor:
-            "rgba(255,255,255,0.08)"
+            "Underlying Price"
         },
 
-        // ==================================================
-        // OI LEVELS
-        // ==================================================
-
         shapes: future ? [
-
-          // PUT SUPPORT
 
           future.high_oi_put_strike ? {
 
@@ -789,8 +922,6 @@
             }
 
           } : null,
-
-          // CALL RESISTANCE
 
           future.high_oi_call_strike ? {
 
@@ -817,13 +948,7 @@
 
         ].filter(Boolean) : [],
 
-        // ==================================================
-        // LABELS
-        // ==================================================
-
         annotations: future ? [
-
-          // PUT LABEL
 
           future.high_oi_put_strike ? {
 
@@ -849,8 +974,6 @@
             xanchor: "left"
 
           } : null,
-
-          // CALL LABEL
 
           future.high_oi_call_strike ? {
 
@@ -879,10 +1002,6 @@
 
         ].filter(Boolean) : [],
 
-        legend: {
-          orientation: "h"
-        },
-
         margin: {
 
           t: 80,
@@ -901,14 +1020,13 @@
         layout,
 
         {
-          responsive: true,
-          displayModeBar: true
+          responsive: true
         }
       );
     }
 
     // ======================================================
-    // HELPER FUNCTIONS
+    // HELPER
     // ======================================================
 
     function average(arr) {
