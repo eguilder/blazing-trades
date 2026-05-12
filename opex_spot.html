@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+  <meta charset="UTF-8" />
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>OPEX Range Dashboard</title>
+
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: Arial, sans-serif;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      font-size: 34px;
+    }
+
+    p {
+      color: #94a3b8;
+      margin-bottom: 24px;
+    }
+
+    .upload-box {
+      background: #111827;
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 24px;
+    }
+
+    input[type="file"] {
+      margin-top: 12px;
+      color: white;
+    }
+
+    .controls {
+      margin-bottom: 24px;
+    }
+
+    select {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: none;
+      background: #1e293b;
+      color: white;
+      font-size: 14px;
+    }
+
+    .stats-grid {
+      display: grid;
+
+      grid-template-columns:
+        repeat(auto-fit, minmax(180px, 1fr));
+
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: #111827;
+      border-radius: 14px;
+      padding: 18px;
+    }
+
+    .stat-title {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: bold;
+    }
+
+    .chart-card {
+      background: #111827;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 28px;
+    }
+
+    #rangeChart {
+      width: 100%;
+      height: 760px;
+    }
+
+    .footer {
+      margin-top: 30px;
+      color: #64748b;
+      font-size: 12px;
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <h1>OPEX Range Dashboard</h1>
+
+  <p>
+    Historical realized ranges +
+    forward implied move analysis
+    for monthly options expiration.
+  </p>
+
+  <div class="upload-box">
+
+    <h3>Upload CSV</h3>
+
+    <p>
+      Upload your generated
+      <strong>opex_study_results.csv</strong>
+    </p>
+
+    <input
+      type="file"
+      id="csvFile"
+      accept=".csv"
+    />
+
+  </div>
+
+  <div class="controls">
+
+    <select id="tickerSelect"></select>
+
+  </div>
+
+  <div class="stats-grid">
+
+    <div class="stat-card">
+
+      <div class="stat-title">
+        Average Historical Range %
+      </div>
+
+      <div
+        class="stat-value"
+        id="avgRange"
+      >-</div>
+
+    </div>
+
+    <div class="stat-card">
+
+      <div class="stat-title">
+        Average Weekly Return
+      </div>
+
+      <div
+        class="stat-value"
+        id="avgReturn"
+      >-</div>
+
+    </div>
+
+    <div class="stat-card">
+
+      <div class="stat-title">
+        Average Close Position
+      </div>
+
+      <div
+        class="stat-value"
+        id="avgClosePosition"
+      >-</div>
+
+    </div>
+
+    <div class="stat-card">
+
+      <div class="stat-title">
+        Forward Expected Move
+      </div>
+
+      <div
+        class="stat-value"
+        id="expectedMove"
+      >-</div>
+
+    </div>
+
+  </div>
+
+  <div class="chart-card">
+
+    <div id="rangeChart"></div>
+
+  </div>
+
+  <div class="footer">
+
+    OPEX Realized vs Implied Move Dashboard
+
+  </div>
+
+  <script>
+
+    let globalData = [];
+
+    // ======================================================
+    // CSV PARSER
+    // ======================================================
+
+    function parseCSV(text) {
+
+      const lines =
+        text.trim().split("\n");
+
+      const headers =
+        lines[0].split(",");
+
+      const rows = [];
+
+      for (let i = 1; i < lines.length; i++) {
+
+        const values =
+          lines[i].split(",");
+
+        const row = {};
+
+        headers.forEach((header, index) => {
+
+          row[header] = values[index];
+
+        });
+
+        rows.push({
+
+          ticker: row.ticker,
+          opex_date: row.opex_date,
+          data_type: row.data_type,
+
+          week_open:
+            parseFloat(row.week_open),
+
+          week_high:
+            parseFloat(row.week_high),
+
+          week_low:
+            parseFloat(row.week_low),
+
+          expiration_close:
+            parseFloat(
+              row.expiration_close
+            ),
+
+          range_percent:
+            parseFloat(
+              row.range_percent
+            ),
+
+          weekly_return_percent:
+            parseFloat(
+              row.weekly_return_percent
+            ),
+
+          close_position_in_range:
+            parseFloat(
+              row.close_position_in_range
+            ),
+
+          spot_price:
+            parseFloat(
+              row.spot_price
+            ),
+
+          expected_move:
+            parseFloat(
+              row.expected_move
+            ),
+
+          expected_move_percent:
+            parseFloat(
+              row.expected_move_percent
+            ),
+
+          implied_upper:
+            parseFloat(
+              row.implied_upper
+            ),
+
+          implied_lower:
+            parseFloat(
+              row.implied_lower
+            ),
+
+          iv_percent:
+            parseFloat(
+              row.iv_percent
+            ),
+
+          high_oi_put_strike:
+            parseFloat(
+              row.high_oi_put_strike
+            ),
+
+          high_oi_put_oi:
+            parseInt(
+              row.high_oi_put_oi
+            ),
+
+          high_oi_call_strike:
+            parseFloat(
+              row.high_oi_call_strike
+            ),
+
+          high_oi_call_oi:
+            parseInt(
+              row.high_oi_call_oi
+            )
+        });
+      }
+
+      return rows;
+    }
+
+    // ======================================================
+    // FILE UPLOAD
+    // ======================================================
+
+    document
+      .getElementById("csvFile")
+      .addEventListener(
+        "change",
+        function(event) {
+
+          const file =
+            event.target.files[0];
+
+          if (!file) return;
+
+          const reader =
+            new FileReader();
+
+          reader.onload = function(e) {
+
+            globalData = parseCSV(
+              e.target.result
+            );
+
+            initializeDashboard();
+          };
+
+          reader.readAsText(file);
+        }
+      );
+
+    // ======================================================
+    // INITIALIZE DASHBOARD
+    // ======================================================
+
+    function initializeDashboard() {
+
+      const tickerSelect =
+        document.getElementById(
+          "tickerSelect"
+        );
+
+      const tickers = [
+
+        ...new Set(
+          globalData.map(
+            d => d.ticker
+          )
+        )
+      ];
+
+      tickerSelect.innerHTML = "";
+
+      tickers.forEach(ticker => {
+
+        const option =
+          document.createElement(
+            "option"
+          );
+
+        option.value = ticker;
+        option.textContent = ticker;
+
+        tickerSelect.appendChild(
+          option
+        );
+      });
+
+      tickerSelect.addEventListener(
+        "change",
+        () => updateDashboard(
+          tickerSelect.value
+        )
+      );
+
+      updateDashboard(
+        tickers[0]
+      );
+    }
+
+    // ======================================================
+    // UPDATE DASHBOARD
+    // ======================================================
+
+    function updateDashboard(ticker) {
+
+      const tickerData =
+        globalData.filter(
+          d => d.ticker === ticker
+        );
+
+      const historical =
+        tickerData.filter(
+          d => d.data_type === "historical"
+        );
+
+      const future =
+        tickerData.find(
+          d => d.data_type === "future"
+        );
+
+      updateStats(
+        historical,
+        future
+      );
+
+      drawChart(
+        historical,
+        future,
+        ticker
+      );
+    }
+
+    // ======================================================
+    // UPDATE STATS
+    // ======================================================
+
+    function updateStats(
+      historical,
+      future
+    ) {
+
+      const avgRange = average(
+        historical.map(
+          d => d.range_percent
+        )
+      ).toFixed(2);
+
+      const avgReturn = average(
+        historical.map(
+          d => d.weekly_return_percent
+        )
+      ).toFixed(2);
+
+      const avgClosePos = average(
+        historical.map(
+          d => d.close_position_in_range
+        )
+      ).toFixed(3);
+
+      document.getElementById(
+        "avgRange"
+      ).innerText =
+        `${avgRange}%`;
+
+      document.getElementById(
+        "avgReturn"
+      ).innerText =
+        `${avgReturn}%`;
+
+      document.getElementById(
+        "avgClosePosition"
+      ).innerText =
+        avgClosePos;
+
+      if (future) {
+
+        document.getElementById(
+          "expectedMove"
+        ).innerText =
+          `±${future.expected_move}`
+          + ` (${future.expected_move_percent}%)`;
+
+      } else {
+
+        document.getElementById(
+          "expectedMove"
+        ).innerText = "-";
+      }
+    }
+
+    // ======================================================
+    // DRAW CHART
+    // ======================================================
+
+    function drawChart(
+      historical,
+      future,
+      ticker
+    ) {
+
+      const traces = [];
+
+      // ====================================================
+      // HISTORICAL RANGE
+      // ====================================================
+
+      const historicalTrace = {
+
+        x: historical.map(
+          d => d.opex_date
+        ),
+
+        y: historical.map(
+          d => d.week_high
+        ),
+
+        mode: "lines",
+
+        line: {
+          width: 10,
+          color:
+            "rgba(96,165,250,0.65)"
+        },
+
+        error_y: {
+
+          type: "data",
+
+          symmetric: false,
+
+          array:
+            historical.map(d => 0),
+
+          arrayminus:
+            historical.map(
+              d =>
+                d.week_high
+                - d.week_low
+            ),
+
+          thickness: 8,
+
+          width: 0
+        },
+
+        hovertemplate:
+          "<b>%{x}</b><br>"
+          + "High: %{y:.2f}<br>"
+          + "<extra></extra>",
+
+        name: "Historical Range"
+      };
+
+      traces.push(
+        historicalTrace
+      );
+
+      // ====================================================
+      // HISTORICAL CLOSES
+      // ====================================================
+
+      const closeTrace = {
+
+        x: historical.map(
+          d => d.opex_date
+        ),
+
+        y: historical.map(
+          d => d.expiration_close
+        ),
+
+        mode: "markers",
+
+        marker: {
+
+          size: 12,
+
+          color:
+            historical.map(d =>
+
+              d.close_position_in_range >= 0.5
+              ? "#22c55e"
+              : "#ef4444"
+            ),
+
+          line: {
+            width: 2,
+            color: "white"
+          }
+        },
+
+        name: "Expiration Close"
+      };
+
+      traces.push(
+        closeTrace
+      );
+
+      // ====================================================
+      // FUTURE IMPLIED RANGE
+      // ====================================================
+
+      if (future) {
+
+        const impliedTrace = {
+
+          x: [
+            future.opex_date
+          ],
+
+          y: [
+            future.implied_upper
+          ],
+
+          mode: "lines",
+
+          line: {
+            width: 12,
+            color:
+              "rgba(251,146,60,0.85)",
+            dash: "dash"
+          },
+
+          error_y: {
+
+            type: "data",
+
+            symmetric: false,
+
+            array: [0],
+
+            arrayminus: [
+
+              future.implied_upper
+              - future.implied_lower
+            ],
+
+            thickness: 10,
+
+            width: 0
+          },
+
+          hovertemplate:
+            "<b>Future OPEX</b><br>"
+            + "Expected Move: "
+            + future.expected_move
+            + "<br>"
+            + "IV: "
+            + future.iv_percent
+            + "%"
+            + "<extra></extra>",
+
+          name: "Implied Move"
+        };
+
+        traces.push(
+          impliedTrace
+        );
+
+        // ==================================================
+        // CURRENT SPOT
+        // ==================================================
+
+        const spotTrace = {
+
+          x: [
+            future.opex_date
+          ],
+
+          y: [
+            future.spot_price
+          ],
+
+          mode: "markers",
+
+          marker: {
+
+            size: 16,
+
+            color: "#facc15",
+
+            line: {
+              width: 2,
+              color: "white"
+            }
+          },
+
+          name: "Spot"
+        };
+
+        traces.push(
+          spotTrace
+        );
+      }
+
+      // ====================================================
+      // LAYOUT
+      // ====================================================
+
+      const layout = {
+
+        title: {
+
+          text:
+            `${ticker} — `
+            + `Historical Realized `
+            + `vs Forward Implied `
+            + `OPEX Structure`,
+
+          font: {
+            size: 24,
+            color: "#f8fafc"
+          }
+        },
+
+        paper_bgcolor:
+          "#111827",
+
+        plot_bgcolor:
+          "#111827",
+
+        font: {
+          color: "#e2e8f0"
+        },
+
+        xaxis: {
+
+          title:
+            "Monthly OPEX",
+
+          tickangle: -45,
+
+          gridcolor:
+            "rgba(255,255,255,0.08)"
+        },
+
+        yaxis: {
+
+          title:
+            "Underlying Price",
+
+          gridcolor:
+            "rgba(255,255,255,0.08)"
+        },
+
+        // ==================================================
+        // OI LEVELS
+        // ==================================================
+
+        shapes: future ? [
+
+          // PUT SUPPORT
+
+          future.high_oi_put_strike ? {
+
+            type: "line",
+
+            xref: "paper",
+            yref: "y",
+
+            x0: 0.91,
+            x1: 0.98,
+
+            y0:
+              future.high_oi_put_strike,
+
+            y1:
+              future.high_oi_put_strike,
+
+            line: {
+              color: "#22c55e",
+              width: 8
+            }
+
+          } : null,
+
+          // CALL RESISTANCE
+
+          future.high_oi_call_strike ? {
+
+            type: "line",
+
+            xref: "paper",
+            yref: "y",
+
+            x0: 0.91,
+            x1: 0.98,
+
+            y0:
+              future.high_oi_call_strike,
+
+            y1:
+              future.high_oi_call_strike,
+
+            line: {
+              color: "#ef4444",
+              width: 8
+            }
+
+          } : null
+
+        ].filter(Boolean) : [],
+
+        // ==================================================
+        // LABELS
+        // ==================================================
+
+        annotations: future ? [
+
+          // PUT LABEL
+
+          future.high_oi_put_strike ? {
+
+            xref: "paper",
+            yref: "y",
+
+            x: 0.985,
+
+            y:
+              future.high_oi_put_strike,
+
+            text:
+              `PUT `
+              + `${future.high_oi_put_strike}`,
+
+            showarrow: false,
+
+            font: {
+              color: "#22c55e",
+              size: 12
+            },
+
+            xanchor: "left"
+
+          } : null,
+
+          // CALL LABEL
+
+          future.high_oi_call_strike ? {
+
+            xref: "paper",
+            yref: "y",
+
+            x: 0.985,
+
+            y:
+              future.high_oi_call_strike,
+
+            text:
+              `CALL `
+              + `${future.high_oi_call_strike}`,
+
+            showarrow: false,
+
+            font: {
+              color: "#ef4444",
+              size: 12
+            },
+
+            xanchor: "left"
+
+          } : null
+
+        ].filter(Boolean) : [],
+
+        legend: {
+          orientation: "h"
+        },
+
+        margin: {
+
+          t: 80,
+          r: 120,
+          b: 100,
+          l: 80
+        }
+      };
+
+      Plotly.newPlot(
+
+        "rangeChart",
+
+        traces,
+
+        layout,
+
+        {
+          responsive: true,
+          displayModeBar: true
+        }
+      );
+    }
+
+    // ======================================================
+    // HELPER FUNCTIONS
+    // ======================================================
+
+    function average(arr) {
+
+      if (arr.length === 0)
+        return 0;
+
+      return arr.reduce(
+        (a, b) => a + b,
+        0
+      ) / arr.length;
+    }
+
+  </script>
+
+</body>
+</html>
