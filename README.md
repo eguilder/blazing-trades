@@ -171,7 +171,7 @@ PUT WALL ───────
 project/
 │
 ├── opex_spot.py
-├── dashboard.html
+├── opex_spot.html
 ├── opex_study_results.csv
 └── README.md
 ```
@@ -209,7 +209,7 @@ opex_study_results.csv
 Open:
 
 ```text
-dashboard.html
+opex_spot.html
 ```
 
 in your browser.
