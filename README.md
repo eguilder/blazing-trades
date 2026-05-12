@@ -232,11 +232,17 @@ using the dashboard upload interface.
 
 Default configuration:
 
-- SPY
-- QQQ
-- AAPL
-- NVDA
-- TSLA
+ - TSLA
+ - NVDA
+ - QCOM
+ - MU
+ - INTC
+ - AAPL
+ - META
+ - AMZN
+ - MSFT
+ - AMD
+ - RKLB
 
 You can add additional highly liquid names easily.
 
