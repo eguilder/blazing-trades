@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import sys
+from collections import deque
 
 # =========================================================
 # ARGUMENTS
@@ -31,7 +32,21 @@ OUTPUT_XLSX = (
 
 DATE_COLUMN = "Date"
 PRODUCT_COLUMN = "Product"
-VALUE_COLUMN = "Total EUR"
+VALUE_COLUMN = "Total EUR"  # Net cash flow per trade (including fees) if available
+
+# Try to auto-detect common alternative column names
+QTY_CANDIDATES = [
+    "Qty", "Quantity", "Contracts", "Units", "Size"
+]
+AMOUNT_CANDIDATES = [
+    VALUE_COLUMN,
+    "Net Amount EUR", "Amount EUR", "Net EUR", "Cash EUR", "Cash",
+    "Net Amount", "Amount", "Total"
+]
+FEE_CANDIDATES = [
+    "Commission", "Fee", "Fees", "Commission EUR", "Fees EUR",
+    "Charges", "Total Fees", "Cost"
+]
 
 # =========================================================
 # LOAD CSV
@@ -102,8 +117,7 @@ df.columns = [c.strip() for c in df.columns]
 
 required = [
     DATE_COLUMN,
-    PRODUCT_COLUMN,
-    VALUE_COLUMN
+    PRODUCT_COLUMN
 ]
 
 missing = [
@@ -117,134 +131,251 @@ if missing:
         f"Missing columns: {missing}"
     )
 
+# Resolve optional columns
+
+def first_existing(cols, candidates):
+    for name in candidates:
+        if name in cols:
+            return name
+    return None
+
+QTY_COLUMN = first_existing(df.columns, QTY_CANDIDATES)
+AMOUNT_COLUMN = first_existing(df.columns, AMOUNT_CANDIDATES) or VALUE_COLUMN
+FEE_COLUMN = first_existing(df.columns, FEE_CANDIDATES)
+
+if AMOUNT_COLUMN not in df.columns:
+    raise Exception(
+        f"Missing cash amount column. Looked for any of: {AMOUNT_CANDIDATES}"
+    )
+
 # =========================================================
 # PREPARE DATA
 # =========================================================
 
-work = df[
-    [
-        DATE_COLUMN,
-        PRODUCT_COLUMN,
-        VALUE_COLUMN
-    ]
-].copy()
+use_cols = [DATE_COLUMN, PRODUCT_COLUMN, AMOUNT_COLUMN]
+if QTY_COLUMN:
+    use_cols.append(QTY_COLUMN)
+if FEE_COLUMN:
+    use_cols.append(FEE_COLUMN)
 
-# Parse dates
+work = df[use_cols].copy()
+
+# Parse dates (supports time if present)
 work["DateParsed"] = pd.to_datetime(
     work[DATE_COLUMN],
     dayfirst=True,
     errors="coerce"
 )
 
-# Parse EUR values
+# Generic number parser (supports '1,234.56' and '1.234,56')
 def parse_number(x):
-
+    if pd.isna(x):
+        return np.nan
     s = str(x).strip()
-
-    # Remove commas if present
-    s = s.replace(",", "")
-
+    if s == "":
+        return np.nan
+    # Heuristic: if both "." and "," present and "," is to the right of ".", assume comma is decimal
+    if "," in s and "." in s and s.rfind(",") > s.rfind("."):
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", "")
     try:
         return float(s)
-
-    except:
+    except Exception:
         return np.nan
 
-work["TotalEUR"] = (
-    work[VALUE_COLUMN]
-    .apply(parse_number)
-)
+work["CashEUR"] = work[AMOUNT_COLUMN].apply(parse_number)
+if QTY_COLUMN:
+    work["Qty"] = work[QTY_COLUMN].apply(parse_number)
+else:
+    work["Qty"] = np.nan
+
+# Optional fees (if present) – included for completeness; if your cash column already includes fees, this will be 0
+if FEE_COLUMN:
+    work["FeeEUR"] = work[FEE_COLUMN].apply(parse_number).fillna(0.0)
+else:
+    work["FeeEUR"] = 0.0
 
 # Remove invalid rows
-work = work.dropna(
-    subset=[
-        "DateParsed",
-        PRODUCT_COLUMN,
-        "TotalEUR"
-    ]
-)
+req = ["DateParsed", PRODUCT_COLUMN, "CashEUR"]
+work = work.dropna(subset=req)
+
+# Ensure stable ordering
+work = work.sort_values([PRODUCT_COLUMN, "DateParsed"]).reset_index(drop=True)
 
 # =========================================================
-# CREATE MONTH KEY
+# REALIZATION LOGIC (assign realized P/L to the close month)
 # =========================================================
 
-work["Month"] = (
-    work["DateParsed"]
-    .dt.strftime("%Y-%m")
-)
+has_qty = work["Qty"].notna().any()
 
-# =========================================================
-# GROUP BY PRODUCT + MONTH
-# =========================================================
+realized_rows = []  # List of dicts with realized events
+open_lots_count = 0
 
-grouped = (
-    work.groupby(
-        [
-            PRODUCT_COLUMN,
-            "Month"
-        ],
-        as_index=False
+if has_qty:
+
+    for product, g in work.groupby(PRODUCT_COLUMN, sort=False):
+        # FIFO queue of open lots: each lot is dict with remaining units and per-unit cash
+        # Positive qty lot => opened long (cash usually negative). Negative qty lot => opened short (cash usually positive).
+        lots = deque()
+
+        for _, r in g.iterrows():
+            dt = r["DateParsed"]
+            qty = int(round(r["Qty"])) if not pd.isna(r["Qty"]) else 0
+            if qty == 0:
+                continue
+            per_unit_cash = r["CashEUR"] / abs(qty)
+
+            # If no position or adding in same direction => open lot
+            def position_sign():
+                total = sum(lot["remain"] * lot["side"] for lot in lots)
+                if total > 0:
+                    return 1
+                if total < 0:
+                    return -1
+                return 0
+
+            sign_now = 1 if qty > 0 else -1
+            pos_sign = position_sign()
+
+            # Determine if this trade closes existing lots
+            if pos_sign != 0 and sign_now != pos_sign:
+                # We are closing against existing position
+                qty_to_close = abs(qty)
+                while qty_to_close > 0 and lots:
+                    lot = lots[0]
+                    closable = min(qty_to_close, lot["remain"])
+                    # Realized per-unit = open per-unit cash + close per-unit cash
+                    realized = closable * (lot["per_unit_cash"] + per_unit_cash)
+                    realized_rows.append({
+                        "Product": product,
+                        "Open Date": lot["open_date"],
+                        "Close Date": dt,
+                        "Close Month": dt.strftime("%Y-%m"),
+                        "Closed Qty": closable,
+                        "Realized P/L EUR": realized
+                    })
+
+                    lot["remain"] -= closable
+                    qty_to_close -= closable
+
+                    if lot["remain"] == 0:
+                        lots.popleft()
+
+                # If we over-closed and flipped the position, the remainder becomes a new lot in the new direction
+                if qty_to_close > 0:
+                    lots.append({
+                        "remain": qty_to_close,
+                        "per_unit_cash": per_unit_cash,
+                        "open_date": dt,
+                        "side": sign_now
+                    })
+            else:
+                # Opening or adding to same direction
+                lots.append({
+                    "remain": abs(qty),
+                    "per_unit_cash": per_unit_cash,
+                    "open_date": dt,
+                    "side": sign_now
+                })
+
+        # Count any open (unmatched) lots leftover
+        open_lots_count += sum(lot["remain"] for lot in lots)
+
+    if realized_rows:
+        realized_df = pd.DataFrame(realized_rows)
+    else:
+        realized_df = pd.DataFrame(columns=[
+            "Product", "Open Date", "Close Date", "Close Month",
+            "Closed Qty", "Realized P/L EUR"
+        ])
+
+    # Build per-product per-close-month aggregation
+    if not realized_df.empty:
+        grouped = (
+            realized_df
+            .groupby(["Product", "Close Month"], as_index=False)
+            .agg({
+                "Realized P/L EUR": "sum",
+                "Open Date": "min",
+                "Close Date": "max",
+                "Closed Qty": "sum"
+            })
+            .rename(columns={
+                "Close Month": "Month",
+                "Open Date": "First Trade",
+                "Close Date": "Last Trade",
+                "Closed Qty": "Trade Count"
+            })
+        )
+        grouped["Net EUR"] = grouped["Realized P/L EUR"]
+    else:
+        # No realized events; fall back to empty report
+        grouped = pd.DataFrame(columns=[
+            "Product", "Month", "Net EUR", "First Trade", "Last Trade",
+            "Trade Count", "Realized P/L EUR"
+        ])
+
+else:
+    # =====================================================
+    # FALLBACK: no quantity column available -> use original
+    # logic (sum cash by transaction month)
+    # =====================================================
+
+    print(
+        "Warning: Quantity column not found. "
+        f"Looked for any of: {QTY_CANDIDATES}.\n"
+        "Falling back to naive monthly sum by transaction date."
     )
-    .agg({
-        "TotalEUR": "sum",
-        "DateParsed": [
-            "min",
-            "max",
-            "count"
-        ]
-    })
-)
 
-# Flatten columns
-grouped.columns = [
-    "Product",
-    "Month",
-    "Net EUR",
-    "First Trade",
-    "Last Trade",
-    "Trade Count"
-]
+    # Parse EUR values already in work["CashEUR"], create Month key
+    work["Month"] = work["DateParsed"].dt.strftime("%Y-%m")
 
-# Realized P/L
-grouped["Realized P/L EUR"] = (
-    grouped["Net EUR"]
-)
+    grouped = (
+        work.groupby([PRODUCT_COLUMN, "Month"], as_index=False)
+        .agg({
+            "CashEUR": "sum",
+            "DateParsed": ["min", "max", "count"]
+        })
+    )
+
+    grouped.columns = [
+        "Product", "Month", "Net EUR", "First Trade", "Last Trade", "Trade Count"
+    ]
+    grouped["Realized P/L EUR"] = grouped["Net EUR"]
 
 # =========================================================
 # MONTHLY P/L
 # =========================================================
 
-monthly_pl = (
-    grouped.groupby("Month")[
-        "Realized P/L EUR"
-    ]
-    .sum()
-    .reset_index()
-    .sort_values("Month")
-)
+if grouped.empty:
+    monthly_pl = pd.DataFrame(columns=["Month", "Realized P/L EUR"])  # empty
+else:
+    monthly_pl = (
+        grouped.groupby("Month")["Realized P/L EUR"]
+        .sum()
+        .reset_index()
+        .sort_values("Month")
+    )
 
 # =========================================================
 # SUMMARY
 # =========================================================
 
-total_pl = round(
-    grouped["Realized P/L EUR"].sum(),
-    2
-)
+total_pl = round(float(grouped["Realized P/L EUR"].sum()) if not grouped.empty else 0.0, 2)
 
 summary = pd.DataFrame([{
     "Total Realized P/L EUR": total_pl,
-    "Total Product+Month Groups": len(grouped),
-    "Open/Unmatched Trades": 0
+    "Total Product+Month Groups": int(len(grouped)),
+    "Open/Unmatched Trades": int(open_lots_count)
 }])
 
 # =========================================================
 # SORT OUTPUT
 # =========================================================
 
-grouped = grouped.sort_values(
-    ["Month", "Product"]
-)
+if not grouped.empty:
+    grouped = grouped.sort_values(["Month", "Product"]).reset_index(drop=True)
 
 # =========================================================
 # EXPORT TO EXCEL
@@ -328,9 +459,9 @@ if SHOW_DETAILS:
 
             print(f"  Product: {product}")
             print(f"    P/L: {pnl:.2f} EUR")
-            print(f"    Trades: {trades}")
-            print(f"    First Trade: {first_trade}")
-            print(f"    Last Trade : {last_trade}")
+            print(f"    Closed Qty: {int(trades) if not pd.isna(trades) else 0}")
+            print(f"    First Open: {first_trade}")
+            print(f"    Last Close: {last_trade}")
             print()
 
 # =========================================================
