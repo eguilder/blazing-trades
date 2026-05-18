@@ -11,20 +11,35 @@ from collections import deque
 if len(sys.argv) < 2:
 
     print("\nUsage:")
-    print("python3 pl_report.py <csv_file> [--details]")
+    print("python3 pl_report.py <csv_file> [--details] [--write] [--output <xlsx_path>]")
+    print("  --write          Export Excel to default path (<input_stem>_PL_Report.xlsx) or --output path")
+    print("  --output PATH    Export Excel to custom PATH (implies --write)")
     sys.exit(1)
 
 INPUT_CSV = sys.argv[1]
 
-# Optional flag
+# Optional flags
 SHOW_DETAILS = "--details" in sys.argv
+WRITE_TO_FILE = ("--write" in sys.argv) or ("--output" in sys.argv)
 
-# Output filename
+# Output filename resolution
+output_path_arg = None
+if "--output" in sys.argv:
+    try:
+        idx = sys.argv.index("--output")
+        output_path_arg = sys.argv[idx + 1]
+        # Basic validation: next token should not be another flag
+        if output_path_arg.startswith("--"):
+            raise ValueError
+    except Exception:
+        print("Error: --output requires a file path argument")
+        sys.exit(1)
+
 input_path = Path(INPUT_CSV)
-
-OUTPUT_XLSX = (
-    input_path.stem + "_PL_Report.xlsx"
-)
+if output_path_arg:
+    OUTPUT_XLSX = output_path_arg
+else:
+    OUTPUT_XLSX = input_path.stem + "_PL_Report.xlsx"
 
 # =========================================================
 # COLUMN CONFIG
@@ -378,31 +393,32 @@ if not grouped.empty:
     grouped = grouped.sort_values(["Month", "Product"]).reset_index(drop=True)
 
 # =========================================================
-# EXPORT TO EXCEL
+# EXPORT TO EXCEL (optional)
 # =========================================================
 
-with pd.ExcelWriter(
-    OUTPUT_XLSX,
-    engine="openpyxl"
-) as writer:
+if 'WRITE_TO_FILE' in globals() and WRITE_TO_FILE:
+    with pd.ExcelWriter(
+        OUTPUT_XLSX,
+        engine="openpyxl"
+    ) as writer:
 
-    summary.to_excel(
-        writer,
-        sheet_name="Summary",
-        index=False
-    )
+        summary.to_excel(
+            writer,
+            sheet_name="Summary",
+            index=False
+        )
 
-    monthly_pl.to_excel(
-        writer,
-        sheet_name="Monthly P&L",
-        index=False
-    )
+        monthly_pl.to_excel(
+            writer,
+            sheet_name="Monthly P&L",
+            index=False
+        )
 
-    grouped.to_excel(
-        writer,
-        sheet_name="Product+Month P&L",
-        index=False
-    )
+        grouped.to_excel(
+            writer,
+            sheet_name="Product+Month P&L",
+            index=False
+        )
 
 # =========================================================
 # CONSOLE OUTPUT
@@ -474,5 +490,8 @@ print("==============================")
 
 print(f"{total_pl:.2f} EUR")
 
-print("\nExcel report saved to:")
-print(OUTPUT_XLSX)
+if 'WRITE_TO_FILE' in globals() and WRITE_TO_FILE:
+    print("\nExcel report saved to:")
+    print(OUTPUT_XLSX)
+else:
+    print("\nNote: no file written. Use --write to export Excel to the default path or --output <path>.")
