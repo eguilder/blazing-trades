@@ -4,3 +4,10 @@
 # temporary files
 *.tmp
 *.bak
+
+# data files
+*.csv
+*.xlsx
+
+# session/agent artifacts
+.continue/
