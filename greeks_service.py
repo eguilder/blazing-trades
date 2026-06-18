@@ -23,27 +23,32 @@ UNDERLYINGS = {
     "ADY": {
         "symbol": "ADYEN",
         "tradingClass": "ADY",
-        "exchange": "FTA"
+        "exchange": "FTA",
+        "multiplier": 10
     },
 
     "ASL": {
-    "symbol": "ASML",
-    "tradingClass": "ASL",
-    "exchange": "FTA"
+        "symbol": "ASML",
+        "tradingClass": "ASL",
+        "exchange": "FTA",
+        "multiplier": 100
     },
 
     "BES": {
-        "symbol": "BE Semiconductor",
+        "symbol": "BESI",
         "tradingClass": "BESI",
-        "exchange": "FTA"
+        "exchange": "FTA",
+        "multiplier": 100
     },
 
     "ING": {
         "symbol": "ING",
         "tradingClass": "ING",
-        "exchange": "FTA"
+        "exchange": "FTA",
+        "multiplier": 100
     }
 }
+
 # -----------------------------------------------------------------------------
 # APP
 # -----------------------------------------------------------------------------
@@ -155,6 +160,7 @@ def greeks():
         symbol = info["symbol"]
         trading_class = info["tradingClass"]
         exchange = info["exchange"]
+        multiplier = info["multiplier"]
 
         expiry = pos["expiry"]
         strike = float(pos["strike"])
@@ -192,7 +198,7 @@ def greeks():
                         c["delta"] * qty * c["multiplier"]
                         if c["delta"] is not None else None,
                     "positionTheta":
-                        c["theta"] * qty
+                        c["theta"] * qty * c["multiplier"]
                         if c["theta"] is not None else None
                 })
 
@@ -231,8 +237,6 @@ def greeks():
             continue
 
         contract = qualified[0]
-
-        multiplier = int(contract.multiplier or 100)
 
         # ---------------------------------------------------------------------
         # MARKET DATA
@@ -294,7 +298,7 @@ def greeks():
                 delta * qty * multiplier
                 if delta is not None else None,
             "positionTheta":
-                theta * qty
+                theta * qty * multiplier
                 if theta is not None else None
         })
 
