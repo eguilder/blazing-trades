@@ -22,10 +22,16 @@
     ];
 
     let currentFilter = 'ALL';
+    let currentTickerFilter = 'ALL';
 
-    function extractMonth(text) {
+        function extractMonth(text) {
         const m = text.match(/\d{1,2}(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/i);
         return m ? m[1].toUpperCase() : null;
+    }
+
+    function extractTicker(text) {
+        const m = text.trim().match(/^([A-Z]+)\s+[CP]/);
+        return m ? m[1] : null;
     }
 
     function getOptionRows() {
@@ -36,30 +42,46 @@
             });
     }
 
-    function applyFilter(month) {
-        currentFilter = month;
+        function applyFilters() {
 
         getOptionRows().forEach(row => {
             const product = row.querySelector('[data-name="productName"]');
             const rowMonth = extractMonth(product.textContent);
+            const rowTicker = extractTicker(product.textContent);
+
+            const monthMatch =
+                currentFilter === 'ALL' || rowMonth === currentFilter;
+
+            const tickerMatch =
+                currentTickerFilter === 'ALL' || rowTicker === currentTickerFilter;
 
             row.style.display =
-                month === 'ALL' || rowMonth === month
-                    ? ''
-                    : 'none';
+                monthMatch && tickerMatch ? '' : 'none';
         });
 
         document.querySelectorAll('.tm-month-btn').forEach(btn => {
-            if (btn.dataset.month === month) {
-                btn.style.background = '#4caf50';
-                btn.style.color = '#fff';
-                btn.style.fontWeight = 'bold';
-            } else {
-                btn.style.background = '';
-                btn.style.color = '';
-                btn.style.fontWeight = '';
-            }
+            const active = btn.dataset.month === currentFilter;
+            btn.style.background = active ? '#4caf50' : '';
+            btn.style.color = active ? '#fff' : '';
+            btn.style.fontWeight = active ? 'bold' : '';
         });
+
+        document.querySelectorAll('.tm-ticker-btn').forEach(btn => {
+            const active = btn.dataset.ticker === currentTickerFilter;
+            btn.style.background = active ? '#3b82f6' : '';
+            btn.style.color = active ? '#fff' : '';
+            btn.style.fontWeight = active ? 'bold' : '';
+        });
+    }
+
+    function applyFilter(month) {
+        currentFilter = month;
+        applyFilters();
+    }
+
+    function applyTickerFilter(ticker) {
+        currentTickerFilter = ticker;
+        applyFilters();
     }
 
     function buildButtons() {
@@ -98,17 +120,34 @@
             table.parentElement.insertBefore(toolbar, table);
         }
 
-        const desired = ['ALL', ...months];
+                const tickers = [...new Set(
+            rows.map(r =>
+                extractTicker(
+                    r.querySelector('[data-name="productName"]').textContent
+                )
+            )
+        )]
+        .filter(Boolean)
+        .sort();
 
-        if (toolbar.dataset.months === desired.join(',')) {
-            applyFilter(currentFilter);
+        const desiredMonths = ['ALL', ...months];
+        const desiredTickers = ['ALL', ...tickers];
+        const desiredKey =
+            desiredMonths.join(',') + '|' + desiredTickers.join(',');
+
+        if (toolbar.dataset.filterKey === desiredKey) {
+            applyFilters();
             return;
         }
 
-        toolbar.dataset.months = desired.join(',');
+        toolbar.dataset.filterKey = desiredKey;
         toolbar.innerHTML = '';
 
-        desired.forEach(month => {
+        // -----------------------------------------------------------------
+        // Month buttons
+        // -----------------------------------------------------------------
+
+        desiredMonths.forEach(month => {
 
             const btn = document.createElement('button');
 
@@ -127,11 +166,47 @@
             toolbar.appendChild(btn);
         });
 
-        if (!desired.includes(currentFilter)) {
+        // -----------------------------------------------------------------
+        // Divider
+        // -----------------------------------------------------------------
+
+        const divider = document.createElement('span');
+        divider.style.borderLeft = '1px solid #555';
+        divider.style.margin = '0 6px';
+        toolbar.appendChild(divider);
+
+        // -----------------------------------------------------------------
+        // Ticker buttons
+        // -----------------------------------------------------------------
+
+        desiredTickers.forEach(ticker => {
+
+            const btn = document.createElement('button');
+
+            btn.className = 'tm-ticker-btn';
+            btn.dataset.ticker = ticker;
+
+            btn.textContent = ticker;
+
+            btn.style.padding = '4px 10px';
+            btn.style.border = '1px solid #777';
+            btn.style.borderRadius = '4px';
+            btn.style.cursor = 'pointer';
+
+            btn.onclick = () => applyTickerFilter(ticker);
+
+            toolbar.appendChild(btn);
+        });
+
+        if (!desiredMonths.includes(currentFilter)) {
             currentFilter = 'ALL';
         }
 
-        applyFilter(currentFilter);
+        if (!desiredTickers.includes(currentTickerFilter)) {
+            currentTickerFilter = 'ALL';
+        }
+
+        applyFilters();
     }
 
     const observer = new MutationObserver(() => {
