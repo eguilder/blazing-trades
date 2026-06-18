@@ -12,6 +12,7 @@ A collection of options trading tools covering OPEX analysis and live Greeks ove
 ├── greeks_service.py                # Greeks API server (Flask + IBKR)
 ├── DeGiro Greeks Overlay-1.0.js     # Tampermonkey script — live Greeks
 ├── DeGiro Options Month Buttons.js  # Tampermonkey script — expiry filter
+├── pl_report.py                     # Realized P&L report from broker CSV
 └── README.md
 ```
 
@@ -137,6 +138,41 @@ Configured in `greeks_service.py`:
 | `ING` | ING | FTA | 100 |
 
 Add further underlyings by extending the `UNDERLYINGS` dict in `greeks_service.py`.
+
+---
+
+# Section 3 — Realized P&L Report
+
+Generates a realized P&L report from a broker CSV export (e.g. DeGiro transaction history). Produces a per-product, per-month breakdown using FIFO lot matching.
+
+## Usage
+
+```bash
+pip install pandas openpyxl
+python pl_report.py trades.csv [--details] [--write] [--output report.xlsx]
+```
+
+| Flag | Description |
+|---|---|
+| `--details` | Print per-product breakdown in console output |
+| `--write` | Save Excel report to `<input_stem>_PL_Report.xlsx` |
+| `--output PATH` | Save Excel report to a custom path (implies `--write`) |
+
+## How It Works
+
+**Input:** Auto-detects CSV encoding (`utf-8`, `latin1`, `cp1252`) and delimiter (`,`, `;`, `tab`, `|`), so broker exports work without manual cleanup.
+
+**FIFO matching:** Opens and closes are matched chronologically per product. Realized P&L is assigned to the month the position was **closed**, not opened. Partial closes, position flips, and leftover open lots are all handled. Falls back to naive monthly cash summation if no quantity column is present.
+
+**Output:**
+
+| View | Description |
+|---|---|
+| Summary | Total realized P&L, number of product/month groups, open/unmatched trade count |
+| Monthly P&L | Total realized P&L per calendar month |
+| Product + Month P&L | Per-product breakdown — closed qty, first open, last close, realized P&L |
+
+Always printed to the console. Use `--write` or `--output` to also export an Excel file with all three views as separate sheets.
 
 ---
 
