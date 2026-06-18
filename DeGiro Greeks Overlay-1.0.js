@@ -380,8 +380,8 @@
     }
 
     function showSummary(
-        totalDelta,
-        totalTheta
+        totalTheta,
+        deltaByTicker
     ) {
 
         let bar =
@@ -410,27 +410,74 @@
                 '999999';
 
             bar.style.background =
-                '#222';
+                '#1e293b';
 
             bar.style.color =
-                '#fff';
+                '#e2e8f0';
 
             bar.style.padding =
-                '8px 12px';
+                '12px 16px';
 
             bar.style.borderRadius =
-                '6px';
+                '8px';
 
-            bar.style.fontWeight =
-                'bold';
+            bar.style.fontFamily =
+                'Arial, sans-serif';
+
+            bar.style.fontSize =
+                '13px';
+
+            bar.style.lineHeight =
+                '1.6';
+
+            bar.style.boxShadow =
+                '0 4px 12px rgba(0,0,0,0.4)';
+
+            bar.style.minWidth =
+                '180px';
 
             document.body.appendChild(
                 bar
             );
         }
 
-        bar.textContent =
-            `Δ ${totalDelta.toFixed(1)} | Θ ${totalTheta.toFixed(1)}`;
+        const thetaColor =
+            totalTheta < 0
+                ? '#f87171'
+                : '#4ade80';
+
+        const tickerLines =
+            Object.entries(deltaByTicker)
+                .map(([ticker, syntheticShares]) => {
+
+                    const color =
+                        syntheticShares >= 0
+                            ? '#4ade80'
+                            : '#f87171';
+
+                    return `<div style="display:flex; justify-content:space-between; gap:16px;">`
+                        + `<span style="color:#94a3b8;">${ticker}</span>`
+                        + `<span style="color:${color}; font-weight:bold;">`
+                        + `${syntheticShares.toFixed(1)} shares`
+                        + `</span>`
+                        + `</div>`;
+                })
+                .join('');
+
+        bar.innerHTML =
+            `<div style="margin-bottom:8px; font-weight:bold; color:#94a3b8;`
+            + ` text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">`
+            + `Greeks Summary`
+            + `</div>`
+            + `<div style="display:flex; justify-content:space-between; gap:16px; margin-bottom:8px;">`
+            + `<span style="color:#94a3b8;">Portfolio Θ</span>`
+            + `<span style="color:${thetaColor}; font-weight:bold;">`
+            + `${totalTheta.toFixed(2)}</span>`
+            + `</div>`
+            + `<div style="border-top:1px solid #334155; margin-bottom:8px;"></div>`
+            + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px;`
+            + ` text-transform:uppercase; letter-spacing:0.05em;">Synthetic Shares</div>`
+            + tickerLines;
     }
 
     let refreshTimer;
@@ -456,8 +503,8 @@
                 ])
             );
 
-        let totalDelta = 0;
         let totalTheta = 0;
+        const deltaByTicker = {};
         let rendered = 0;
 
         greeks.forEach((g, idx) => {
@@ -492,11 +539,18 @@
                     g.theta
                 );
 
-            totalDelta +=
-                g.positionDelta || 0;
-
             totalTheta +=
                 g.positionTheta || 0;
+
+            if (g.positionDelta != null) {
+
+                const ticker =
+                    position.underlying;
+
+                deltaByTicker[ticker] =
+                    (deltaByTicker[ticker] || 0)
+                    + g.positionDelta;
+            }
 
             rendered += 1;
         });
@@ -504,8 +558,8 @@
         if (rendered > 0) {
 
             showSummary(
-                totalDelta,
-                totalTheta
+                totalTheta,
+                deltaByTicker
             );
         }
 
