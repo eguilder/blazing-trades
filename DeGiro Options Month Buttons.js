@@ -2,13 +2,19 @@
 // @name         DeGiro Options Month Buttons
 // @namespace    degiro
 // @version      1.0
-// @match        https://trader.degiro.nl/*
-// @match        https://*.degiro.nl/*
+// @match        https://trader.degiro.nl/trader/*
 // @grant        none
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    if (
+        location.pathname !== '/trader/' ||
+        location.hash !== '#/portfolio/assets'
+    ) {
+        return;
+    }
 
     const MONTHS = [
         'JAN','FEB','MAR','APR','MAY','JUN',
@@ -59,7 +65,9 @@
     function buildButtons() {
 
         const rows = getOptionRows();
-        if (!rows.length) return;
+        if (!rows.length) {
+            return;
+        }
 
         const months = [...new Set(
             rows.map(r =>
@@ -72,7 +80,9 @@
         .sort((a,b)=>MONTHS.indexOf(a)-MONTHS.indexOf(b));
 
         const table = rows[0].closest('table');
-        if (!table) return;
+        if (!table) {
+            return;
+        }
 
         let toolbar = document.getElementById('tm-options-filter');
 

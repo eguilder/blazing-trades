@@ -3,7 +3,7 @@
 // @namespace    degiro-greeks
 // @version      1.0
 // @description  Show option Greeks from local IBKR service
-// @match        https://trader.degiro.nl/*
+// @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
 // @connect      172.23.224.1
 // ==/UserScript==
@@ -11,6 +11,13 @@
 (function () {
 
     'use strict';
+
+    if (
+        location.pathname !== '/trader/' ||
+        location.hash !== '#/portfolio/assets'
+    ) {
+        return;
+    }
 
     const API_URL = 'http://172.23.224.1:5000/greeks';
 
@@ -147,6 +154,19 @@
         return positions;
     }
 
+    function getOptionsTable() {
+
+        const optionRow =
+            getPositions()
+                .find(position =>
+                    position.row.isConnected
+                );
+
+        return optionRow
+            ? optionRow.row.closest('table')
+            : null;
+    }
+
     function isOverlayElement(node) {
 
         if (node.nodeType !== Node.ELEMENT_NODE) {
@@ -178,48 +198,129 @@
             changedNodes.every(isOverlayElement);
     }
 
-    function ensureHeader() {
+    function getTotalPlColumnIndex(table) {
 
         const headerRow =
-            document.querySelector('thead tr');
+            table
+                ? table.querySelector('thead tr')
+                : null;
+
+        if (!headerRow) {
+            return -1;
+        }
+
+        return [...headerRow.children]
+            .findIndex(cell =>
+                cell.textContent
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase()
+                    .includes('total p/l')
+            );
+    }
+
+    function insertAfter(anchor, node) {
+
+        if (!anchor || !anchor.parentNode) {
+            return;
+        }
+
+        anchor.parentNode.insertBefore(
+            node,
+            anchor.nextSibling
+        );
+    }
+
+    function formatGreek(value) {
+
+        return value != null
+            ? Number(value).toFixed(3)
+            : '-';
+    }
+
+    function removeOverlayColumnsOutside(table) {
+
+        document
+            .querySelectorAll(
+                '.tm-delta-header, .tm-theta-header, .tm-delta, .tm-theta'
+            )
+            .forEach(cell => {
+
+                if (cell.closest('table') !== table) {
+                    cell.remove();
+                }
+            });
+    }
+
+    function ensureHeader() {
+
+        const table =
+            getOptionsTable();
+
+        const headerRow =
+            table
+                ? table.querySelector('thead tr')
+                : null;
 
         if (!headerRow) {
             return;
         }
 
-        if (
+        removeOverlayColumnsOutside(
+            table
+        );
+
+        const totalPlColumnIndex =
+            getTotalPlColumnIndex(
+                table
+            );
+
+        const anchor =
+            totalPlColumnIndex >= 0
+                ? headerRow.children[totalPlColumnIndex] ||
+                    headerRow.lastElementChild
+                : headerRow.lastElementChild;
+
+        let delta =
             headerRow.querySelector(
                 '.tm-delta-header'
-            )
-        ) {
-            return;
+            );
+
+        let theta =
+            headerRow.querySelector(
+                '.tm-theta-header'
+            );
+
+        if (!delta) {
+
+            delta =
+                document.createElement('th');
+
+            delta.className =
+                'tm-delta-header';
+
+            delta.textContent = 'Δ';
         }
 
-        const delta =
-            document.createElement('th');
+        if (!theta) {
 
-        delta.className =
-            'tm-delta-header';
+            theta =
+                document.createElement('th');
 
-        delta.textContent = 'Δ';
+            theta.className =
+                'tm-theta-header';
+
+            theta.textContent = 'Θ';
+        }
 
         delta.style.textAlign =
             'right';
 
-        headerRow.appendChild(delta);
-
-        const theta =
-            document.createElement('th');
-
-        theta.className =
-            'tm-theta-header';
-
-        theta.textContent = 'Θ';
-
         theta.style.textAlign =
             'right';
 
-        headerRow.appendChild(theta);
+        insertAfter(anchor, theta);
+        insertAfter(anchor, delta);
     }
 
     function ensureCells(row) {
@@ -232,6 +333,17 @@
         let theta =
             row.querySelector('.tm-theta');
 
+        const totalPlColumnIndex =
+            getTotalPlColumnIndex(
+                row.closest('table')
+            );
+
+        const anchor =
+            totalPlColumnIndex >= 0
+                ? row.children[totalPlColumnIndex] ||
+                    row.lastElementChild
+                : row.lastElementChild;
+
         if (!delta) {
 
             delta =
@@ -243,7 +355,6 @@
             delta.style.textAlign =
                 'right';
 
-            row.appendChild(delta);
         }
 
         if (!theta) {
@@ -257,8 +368,10 @@
             theta.style.textAlign =
                 'right';
 
-            row.appendChild(theta);
         }
+
+        insertAfter(anchor, theta);
+        insertAfter(anchor, delta);
 
         return {
             delta,
@@ -321,10 +434,14 @@
     }
 
     let refreshTimer;
+    let renderFrame;
     let isLoading = false;
+    let isRendering = false;
     let cachedGreeks = null;
 
     function renderGreeks(greeks) {
+
+        isRendering = true;
 
         ensureHeader();
 
@@ -366,16 +483,14 @@
                 );
 
             cells.delta.textContent =
-                g.positionDelta != null
-                    ? g.positionDelta
-                        .toFixed(1)
-                    : '-';
+                formatGreek(
+                    g.delta
+                );
 
             cells.theta.textContent =
-                g.positionTheta != null
-                    ? g.positionTheta
-                        .toFixed(1)
-                    : '-';
+                formatGreek(
+                    g.theta
+                );
 
             totalDelta +=
                 g.positionDelta || 0;
@@ -394,7 +509,35 @@
             );
         }
 
+        isRendering = false;
+
         return rendered > 0;
+    }
+
+    function scheduleRenderGreeks(greeks) {
+
+        if (renderFrame) {
+            return;
+        }
+
+        renderFrame =
+            requestAnimationFrame(
+                () => {
+
+                    renderFrame = null;
+
+                    try {
+
+                        renderGreeks(
+                            greeks
+                        );
+
+                    } finally {
+
+                        isRendering = false;
+                    }
+                }
+            );
     }
 
     async function loadGreeks() {
@@ -449,7 +592,7 @@
 
         cachedGreeks = greeks;
 
-        renderGreeks(
+        scheduleRenderGreeks(
             cachedGreeks
         );
 
@@ -459,6 +602,14 @@
     function refresh() {
 
         if (isLoading) {
+            return;
+        }
+
+        if (cachedGreeks) {
+            scheduleRenderGreeks(
+                cachedGreeks
+            );
+
             return;
         }
 
@@ -475,7 +626,7 @@
                     }
 
                     if (cachedGreeks) {
-                        renderGreeks(
+                        scheduleRenderGreeks(
                             cachedGreeks
                         );
 
@@ -509,6 +660,10 @@
     const observer =
         new MutationObserver(
             mutations => {
+
+                if (isRendering) {
+                    return;
+                }
 
                 if (
                     mutations.every(
