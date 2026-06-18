@@ -398,7 +398,7 @@
                 'fixed';
 
             bar.style.top =
-                '10px';
+                'calc(10px + 3cm)';
 
             bar.style.right =
                 '10px';
