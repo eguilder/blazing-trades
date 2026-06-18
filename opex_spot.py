@@ -22,7 +22,10 @@ TICKERS = [
     "AMZN",
     "MSFT",
     "AMD",
-    "RKLB"
+    "RKLB",
+    "SOXX",
+    "QQQ",
+    "SPY"
 ]
 
 NUM_MONTHS = 12
