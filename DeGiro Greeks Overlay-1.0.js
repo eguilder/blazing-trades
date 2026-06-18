@@ -486,14 +486,16 @@
                 .join('');
 
         const timestamp =
-            new Date().toLocaleTimeString(
-                [],
-                {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
-                }
-            );
+            fetchedAt
+                ? fetchedAt.toLocaleTimeString(
+                    [],
+                    {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    }
+                )
+                : '-';
 
         bar.innerHTML =
             `<div style="margin-bottom:8px; font-weight:bold; color:#94a3b8;`
@@ -520,6 +522,7 @@
     let isLoading = false;
     let isRendering = false;
     let cachedGreeks = null;
+    let fetchedAt = null;
 
     function renderGreeks(greeks) {
 
@@ -680,6 +683,7 @@
         );
 
         cachedGreeks = greeks;
+        fetchedAt = new Date();
 
         scheduleRenderGreeks(
             cachedGreeks
