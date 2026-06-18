@@ -379,10 +379,7 @@
         };
     }
 
-    function showSummary(
-        totalTheta,
-        deltaByTicker
-    ) {
+    function ensurePanel() {
 
         let bar =
             document.getElementById(
@@ -441,6 +438,30 @@
             );
         }
 
+        return bar;
+    }
+
+    function showLoading() {
+
+        const bar = ensurePanel();
+
+        bar.innerHTML =
+            `<div style="margin-bottom:8px; font-weight:bold; color:#94a3b8;`
+            + ` text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">`
+            + `Greeks Summary`
+            + `</div>`
+            + `<div style="color:#94a3b8; font-size:12px;">`
+            + `&#9696; Loading&hellip;`
+            + `</div>`;
+    }
+
+    function showSummary(
+        totalTheta,
+        deltaByTicker
+    ) {
+
+        const bar = ensurePanel();
+
         const thetaColor =
             totalTheta < 0
                 ? '#f87171'
@@ -464,6 +485,16 @@
                 })
                 .join('');
 
+        const timestamp =
+            new Date().toLocaleTimeString(
+                [],
+                {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                }
+            );
+
         bar.innerHTML =
             `<div style="margin-bottom:8px; font-weight:bold; color:#94a3b8;`
             + ` text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">`
@@ -477,7 +508,11 @@
             + `<div style="border-top:1px solid #334155; margin-bottom:8px;"></div>`
             + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px;`
             + ` text-transform:uppercase; letter-spacing:0.05em;">Synthetic Shares</div>`
-            + tickerLines;
+            + tickerLines
+            + `<div style="border-top:1px solid #334155; margin-top:8px; padding-top:6px;`
+            + ` color:#475569; font-size:11px; text-align:right;">`
+            + `Updated ${timestamp}`
+            + `</div>`;
     }
 
     let refreshTimer;
@@ -692,6 +727,8 @@
                     try {
 
                         ensureHeader();
+
+                        showLoading();
 
                         await loadGreeks();
 
