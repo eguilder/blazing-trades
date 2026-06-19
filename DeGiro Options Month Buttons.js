@@ -34,8 +34,14 @@
         return m ? m[1] : null;
     }
 
+        function getOptionsSection() {
+        return document.querySelector('[data-product-type-id="8"]');
+    }
+
     function getOptionRows() {
-        return [...document.querySelectorAll('tbody tr')]
+        const section = getOptionsSection();
+        if (!section) return [];
+        return [...section.querySelectorAll('tbody tr')]
             .filter(row => {
                 const product = row.querySelector('[data-name="productName"]');
                 return product && extractMonth(product.textContent);
@@ -101,12 +107,13 @@
         .filter(Boolean)
         .sort((a,b)=>MONTHS.indexOf(a)-MONTHS.indexOf(b));
 
-        const table = rows[0].closest('table');
+                const section = getOptionsSection();
+        const table = section ? section.querySelector('table') : null;
         if (!table) {
             return;
         }
 
-        let toolbar = document.getElementById('tm-options-filter');
+        let toolbar = section.querySelector('#tm-options-filter');
 
         if (!toolbar) {
             toolbar = document.createElement('div');
