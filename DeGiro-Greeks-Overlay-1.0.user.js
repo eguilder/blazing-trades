@@ -1,11 +1,16 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
-// @namespace    degiro-greeks
-// @version      1.0
+// @namespace    https://github.com/eguilder/blazing-trades
+// @version      1.0.0
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
 // @connect      172.23.224.1
+// @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Greeks-Overlay-1.0.user.js
+// @downloadURL  https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Greeks-Overlay-1.0.user.js
+// @homepageURL  https://github.com/eguilder/blazing-trades
+// @supportURL   https://github.com/eguilder/blazing-trades/issues
+
 // ==/UserScript==
 
 (function () {

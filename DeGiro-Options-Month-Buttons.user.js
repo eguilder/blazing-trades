@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
-// @namespace    degiro
-// @version      1.0
-// @match        https://trader.degiro.nl/trader/*
+// @namespace    https://github.com/eguilder/blazing-trades
+// @version      1.0.0
+// @description  Quick month selection buttons for the DeGiro options chain
+// @match        https://trader.degiro.nl/*
+// @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
+// @downloadURL  https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
+// @homepageURL  https://github.com/eguilder/blazing-trades
+// @supportURL   https://github.com/eguilder/blazing-trades/issues
 // @grant        none
 // ==/UserScript==
 
