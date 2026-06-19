@@ -120,6 +120,22 @@ python greeks_service.py
 
 IBKR TWS or Gateway must be running with API access enabled on port `7496`.
 
+On Windows, Python 3.14+ also works when the dependencies are installed into
+that interpreter:
+
+```powershell
+py -3.14 -m pip install -r requirements.txt
+py -3.14 .\greeks_service.py
+```
+
+If IBKR reports that the client id is already in use, start the service with a
+different id:
+
+```powershell
+$env:IB_CLIENT_ID = "778"
+py -3.14 .\greeks_service.py
+```
+
 Configure the API host in the script:
 
 ```js

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 
 # IMPORTANT: create event loop before importing ib_insync
@@ -12,9 +13,9 @@ from ib_insync import *
 # CONFIG
 # -----------------------------------------------------------------------------
 
-IB_HOST = "127.0.0.1"
-IB_PORT = 7496
-IB_CLIENT_ID = 777
+IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
+IB_PORT = int(os.getenv("IB_PORT", "7496"))
+IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "777"))
 
 CACHE_SECONDS = 300
 
