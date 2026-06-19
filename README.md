@@ -114,7 +114,7 @@ Fetches live option Greeks from a local IBKR-connected API server (`greeks_servi
 The script requires `greeks_service.py` to be running locally:
 
 ```bash
-pip install flask ib_insync
+pip install -r requirements.txt
 python greeks_service.py
 ```
 
