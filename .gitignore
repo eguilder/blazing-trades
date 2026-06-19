@@ -11,3 +11,8 @@
 
 # session/agent artifacts
 .continue/
+
+# Python artifacts
+.venv/
+.venv312/
+__pycache__/
