@@ -10,8 +10,8 @@ A collection of options trading tools covering OPEX analysis and live Greeks ove
 ├── opex_spot.py                     # OPEX data pipeline
 ├── opex_spot.html                   # OPEX dashboard
 ├── greeks_service.py                # Greeks API server (Flask + IBKR)
-├── DeGiro Greeks Overlay-1.0.js     # Tampermonkey script — live Greeks
-├── DeGiro Options Month Buttons.js  # Tampermonkey script — expiry filter
+├── DeGiro-Greeks-Overlay-1.0.user.js     # Tampermonkey script — live Greeks
+├── DeGiro-Options-Month-Buttons.user.js  # Tampermonkey script — expiry filter
 ├── pl_report.py                     # Realized P&L report from broker CSV
 └── README.md
 ```
@@ -75,7 +75,7 @@ Two Tampermonkey userscripts that enhance the DeGiro portfolio page with options
 
 ## Script 1 — DeGiro Options Month Buttons
 
-**File:** `DeGiro Options Month Buttons.js`
+**File:** `DeGiro-Options-Month-Buttons.user.js`
 
 Adds a row of filter buttons above the portfolio table, one per expiry month present in the portfolio. Clicking a month hides all option rows for other expiries, making it easy to focus on a single expiration.
 
@@ -89,7 +89,7 @@ The active filter is highlighted in green. The button bar updates automatically 
 
 ## Script 2 — DeGiro Greeks Overlay
 
-**File:** `DeGiro Greeks Overlay-1.0.js`
+**File:** `DeGiro-Greeks-Overlay-1.0.user.js`
 
 Fetches live option Greeks from a local IBKR-connected API server (`greeks_service.py`) and overlays them directly onto the DeGiro portfolio table.
 
@@ -139,7 +139,7 @@ py -3.14 .\greeks_service.py
 Configure the API host in the script:
 
 ```js
-const API_URL = 'http://172.23.224.1:5000/greeks';
+const API_URL = 'http://127.0.0.1:5000/greeks';
 ```
 
 ### Supported Underlyings
