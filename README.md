@@ -164,7 +164,8 @@ Add further underlyings by extending the `UNDERLYINGS` dict in `greeks_service.p
 
 Connects directly to IBKR, reads current option positions, requests IBKR model
 Greeks for each option contract, and prints total delta/theta by underlying plus
-a detailed per-contract breakdown.
+a delta dollar exposure column and a detailed per-contract breakdown. `Delta $`
+is calculated as total delta exposure multiplied by the underlying share price.
 
 ## Usage
 
@@ -188,6 +189,7 @@ to `777`.
 | `--client-id-attempts` | `10` | Number of sequential client ids to try |
 | `--connect-timeout` | `4.0` | Seconds to wait for each connection attempt |
 | `--option-exchange` | `SMART` | Exchange used when a position contract has no exchange |
+| `--stock-exchange` | `SMART` | Exchange used when requesting underlying stock prices |
 | `--wait` | `6.0` | Seconds to wait for model Greeks per contract |
 
 Environment variables are also supported:
@@ -199,6 +201,7 @@ $env:IB_OPTION_GREEKS_CLIENT_ID = "778"
 $env:IB_CLIENT_ID_ATTEMPTS = "10"
 $env:IB_CONNECT_TIMEOUT = "4"
 $env:IB_OPTION_EXCHANGE = "SMART"
+$env:IB_STOCK_EXCHANGE = "SMART"
 ```
 
 If IBKR reports `client id is already in use`, the script automatically tries

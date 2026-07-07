@@ -6,6 +6,7 @@ Connect to IBKR, read current option positions, and summarize total delta/theta 
 import argparse
 import asyncio
 import copy
+import math
 import os
 from collections import defaultdict
 
@@ -13,7 +14,7 @@ from collections import defaultdict
 # This is required on Python 3.11+ when no loop exists in the main thread.
 asyncio.set_event_loop(asyncio.new_event_loop())
 
-from ib_insync import IB
+from ib_insync import IB, Stock
 
 
 DEFAULT_HOST = os.getenv('IB_HOST', '127.0.0.1')
@@ -22,6 +23,7 @@ DEFAULT_CLIENT_ID = int(os.getenv('IB_OPTION_GREEKS_CLIENT_ID', '778'))
 DEFAULT_CLIENT_ID_ATTEMPTS = int(os.getenv('IB_CLIENT_ID_ATTEMPTS', '10'))
 DEFAULT_CONNECT_TIMEOUT = float(os.getenv('IB_CONNECT_TIMEOUT', '4'))
 DEFAULT_OPTION_EXCHANGE = os.getenv('IB_OPTION_EXCHANGE', 'SMART')
+DEFAULT_STOCK_EXCHANGE = os.getenv('IB_STOCK_EXCHANGE', 'SMART')
 
 
 def parse_args():
@@ -45,6 +47,10 @@ def parse_args():
         help='Exchange to use when an option position has no exchange (default: %(default)s)'
     )
     parser.add_argument(
+        '--stock-exchange', default=DEFAULT_STOCK_EXCHANGE,
+        help='Exchange to use for underlying stock prices (default: %(default)s)'
+    )
+    parser.add_argument(
         '--client-id-attempts', type=int, default=DEFAULT_CLIENT_ID_ATTEMPTS,
         help='Number of sequential clientIds to try (default: %(default)s)'
     )
@@ -64,6 +70,14 @@ def safe_int(value, default=1):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def valid_number(value):
+    return (
+        isinstance(value, (int, float))
+        and not math.isnan(value)
+        and not math.isinf(value)
+    )
 
 
 def connect_ib(host, port, client_id, client_id_attempts=10, connect_timeout=4):
@@ -151,6 +165,32 @@ def request_model_greeks(ib, contract, timeout=6.0, option_exchange='SMART'):
     return None
 
 
+def request_share_price(ib, symbol, currency='USD', timeout=6.0, stock_exchange='SMART'):
+    stock = Stock(symbol, stock_exchange, currency)
+    qualified = ib.qualifyContracts(stock)
+    market_contract = qualified[0] if qualified else stock
+    ticker = ib.reqMktData(market_contract, '', False, False)
+    try:
+        elapsed = 0.0
+        poll_interval = 0.25
+        while elapsed < timeout:
+            candidates = [
+                ticker.marketPrice(),
+                getattr(ticker, 'last', None),
+                getattr(ticker, 'close', None),
+                getattr(ticker, 'bid', None),
+                getattr(ticker, 'ask', None),
+            ]
+            for price in candidates:
+                if valid_number(price) and price > 0:
+                    return price
+            ib.sleep(poll_interval)
+            elapsed += poll_interval
+    finally:
+        ib.cancelMktData(market_contract)
+    return None
+
+
 def contract_key(contract):
     return (
         contract.symbol,
@@ -162,11 +202,15 @@ def contract_key(contract):
     )
 
 
-def summarize_positions(positions, ib, wait, option_exchange):
+def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
     memo = {}
+    share_prices = {}
     totals = defaultdict(lambda: {
         'total_delta': 0.0,
         'total_theta': 0.0,
+        'delta_dollars': None,
+        'share_price': None,
+        'currency': '',
         'positions': 0,
         'contracts': []
     })
@@ -176,7 +220,9 @@ def summarize_positions(positions, ib, wait, option_exchange):
         underlying = contract.symbol
         quantity = position.position
         multiplier = safe_int(getattr(contract, 'multiplier', None), default=100)
+        currency = getattr(contract, 'currency', '') or 'USD'
         key = contract_key(contract)
+        totals[underlying]['currency'] = currency
 
         if key not in memo:
             greeks = request_model_greeks(
@@ -186,6 +232,16 @@ def summarize_positions(positions, ib, wait, option_exchange):
                 option_exchange=option_exchange
             )
             memo[key] = greeks
+
+        if underlying not in share_prices:
+            share_prices[underlying] = request_share_price(
+                ib,
+                underlying,
+                currency=currency,
+                timeout=wait,
+                stock_exchange=stock_exchange
+            )
+        totals[underlying]['share_price'] = share_prices[underlying]
 
         greeks = memo[key]
         if greeks is None:
@@ -220,6 +276,11 @@ def summarize_positions(positions, ib, wait, option_exchange):
             }
         )
 
+    for data in totals.values():
+        share_price = data['share_price']
+        if share_price is not None:
+            data['delta_dollars'] = data['total_delta'] * share_price
+
     return totals
 
 
@@ -228,13 +289,18 @@ def print_summary(totals):
         print('No option positions were found in the connected IBKR account.')
         return
 
-    print('Ticker | Total Delta | Total Theta | Option Contracts')
-    print('------ | ----------- | ----------- | ----------------')
+    print('Ticker | Total Delta |        Delta $ | Total Theta | Option Contracts')
+    print('------ | ----------- | -------------- | ----------- | ----------------')
     for ticker, data in sorted(totals.items()):
         delta = data['total_delta']
+        delta_dollars = data['delta_dollars']
+        delta_dollars_text = f'{delta_dollars:,.2f}' if delta_dollars is not None else 'n/a'
         theta = data['total_theta']
         count = data['positions']
-        print(f'{ticker:6} | {delta:11.2f} | {theta:11.2f} | {count:16d}')
+        print(
+            f'{ticker:6} | {delta:11.2f} | {delta_dollars_text:>14} | '
+            f'{theta:11.2f} | {count:16d}'
+        )
 
     print('\nDetailed position breakdown:')
     for ticker, data in sorted(totals.items()):
@@ -265,7 +331,8 @@ def main():
             option_positions,
             ib,
             args.wait,
-            args.option_exchange
+            args.option_exchange,
+            args.stock_exchange
         )
         print_summary(totals)
     finally:
