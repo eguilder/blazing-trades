@@ -10,6 +10,7 @@ A collection of options trading tools covering OPEX analysis and live Greeks ove
 ├── opex_spot.py                     # OPEX data pipeline
 ├── opex_spot.html                   # OPEX dashboard
 ├── greeks_service.py                # Greeks API server (Flask + IBKR)
+├── ibkr_option_greeks.py            # IBKR option position Greeks summary
 ├── DeGiro-Greeks-Overlay-1.0.user.js     # Tampermonkey script — live Greeks
 ├── DeGiro-Options-Month-Buttons.user.js  # Tampermonkey script — expiry filter
 ├── pl_report.py                     # Realized P&L report from broker CSV
@@ -157,7 +158,57 @@ Add further underlyings by extending the `UNDERLYINGS` dict in `greeks_service.p
 
 ---
 
-# Section 3 — Realized P&L Report
+# Section 3 - IBKR Option Greeks Summary
+
+**File:** `ibkr_option_greeks.py`
+
+Connects directly to IBKR, reads current option positions, requests IBKR model
+Greeks for each option contract, and prints total delta/theta by underlying plus
+a detailed per-contract breakdown.
+
+## Usage
+
+```powershell
+pip install -r requirements.txt
+py -3 .\ibkr_option_greeks.py
+```
+
+IBKR TWS or Gateway must be running with API access enabled. By default the
+script connects to `127.0.0.1:7496`, uses delayed market data, and starts with
+client id `778` so it does not collide with `greeks_service.py`, which defaults
+to `777`.
+
+## Options
+
+| Flag | Default | Description |
+|---|---:|---|
+| `--host` | `127.0.0.1` | IBKR TWS/Gateway host |
+| `--port` | `7496` | IBKR TWS/Gateway API port |
+| `--client-id` | `778` | First IBKR API client id to try |
+| `--client-id-attempts` | `10` | Number of sequential client ids to try |
+| `--connect-timeout` | `4.0` | Seconds to wait for each connection attempt |
+| `--option-exchange` | `SMART` | Exchange used when a position contract has no exchange |
+| `--wait` | `6.0` | Seconds to wait for model Greeks per contract |
+
+Environment variables are also supported:
+
+```powershell
+$env:IB_HOST = "127.0.0.1"
+$env:IB_PORT = "7496"
+$env:IB_OPTION_GREEKS_CLIENT_ID = "778"
+$env:IB_CLIENT_ID_ATTEMPTS = "10"
+$env:IB_CONNECT_TIMEOUT = "4"
+$env:IB_OPTION_EXCHANGE = "SMART"
+```
+
+If IBKR reports `client id is already in use`, the script automatically tries
+the next id. If IBKR reports `Please enter exchange` for an option market-data
+request, the script fills blank option exchanges with `SMART`; override this
+with `--option-exchange` if a specific venue is required.
+
+---
+
+# Section 4 — Realized P&L Report
 
 Generates a realized P&L report from a broker CSV export (e.g. DeGiro transaction history). Produces a per-product, per-month breakdown using FIFO lot matching.
 
