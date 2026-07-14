@@ -213,7 +213,8 @@ def greeks():
             f"{underlying} -> "
             f"{symbol} "
             f"{right}{strike} "
-            f"{expiry}"
+            f"{expiry} "
+            f"qty={qty}"
         )
 
         contract = build_contract(
