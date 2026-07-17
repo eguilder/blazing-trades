@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.0.0
+// @version      1.0.3
 // @description  Quick month selection buttons for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
