@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+from collections import defaultdict
 
 # IMPORTANT: create event loop before importing ib_insync
 loop = asyncio.new_event_loop()
@@ -120,6 +121,62 @@ def build_contract(
     )
 
 
+def build_result(
+    row_id,
+    key,
+    underlying,
+    multiplier,
+    delta,
+    theta,
+    gamma,
+    vega,
+    qty
+):
+
+    return {
+        "rowId": row_id,
+        "key": key,
+        "underlying": underlying,
+        "multiplier": multiplier,
+        "delta": delta,
+        "theta": theta,
+        "gamma": gamma,
+        "vega": vega,
+        "positionDelta":
+            delta * qty * multiplier
+            if delta is not None else None,
+        "positionTheta":
+            theta * qty * multiplier
+            if theta is not None else None
+    }
+
+
+def add_theta_summary(results):
+
+    theta_by_ticker = defaultdict(float)
+    portfolio_theta = 0.0
+
+    for result in results:
+
+        underlying = result.get("underlying")
+        position_theta = result.get("positionTheta")
+
+        if underlying is None or position_theta is None:
+            continue
+
+        theta_by_ticker[underlying] += position_theta
+        portfolio_theta += position_theta
+
+    theta_by_ticker = dict(sorted(theta_by_ticker.items()))
+
+    for result in results:
+
+        result["portfolioTheta"] = portfolio_theta
+        result["thetaByTicker"] = theta_by_ticker
+
+    return results
+
+
 # -----------------------------------------------------------------------------
 # ROUTES
 # -----------------------------------------------------------------------------
@@ -187,21 +244,19 @@ def greeks():
 
                 c = cache[key]
 
-                results.append({
-                    "rowId": row_id,
-                    "key": key,
-                    "multiplier": c["multiplier"],
-                    "delta": c["delta"],
-                    "theta": c["theta"],
-                    "gamma": c["gamma"],
-                    "vega": c["vega"],
-                    "positionDelta":
-                        c["delta"] * qty * c["multiplier"]
-                        if c["delta"] is not None else None,
-                    "positionTheta":
-                        c["theta"] * qty * c["multiplier"]
-                        if c["theta"] is not None else None
-                })
+                results.append(
+                    build_result(
+                        row_id,
+                        key,
+                        underlying,
+                        c["multiplier"],
+                        c["delta"],
+                        c["theta"],
+                        c["gamma"],
+                        c["vega"],
+                        qty
+                    )
+                )
 
                 continue
 
@@ -288,23 +343,21 @@ def greeks():
         # RESPONSE
         # ---------------------------------------------------------------------
 
-        results.append({
-            "rowId": row_id,
-            "key": key,
-            "multiplier": multiplier,
-            "delta": delta,
-            "theta": theta,
-            "gamma": gamma,
-            "vega": vega,
-            "positionDelta":
-                delta * qty * multiplier
-                if delta is not None else None,
-            "positionTheta":
-                theta * qty * multiplier
-                if theta is not None else None
-        })
+        results.append(
+            build_result(
+                row_id,
+                key,
+                underlying,
+                multiplier,
+                delta,
+                theta,
+                gamma,
+                vega,
+                qty
+            )
+        )
 
-    return jsonify(results)
+    return jsonify(add_theta_summary(results))
 
 
 # -----------------------------------------------------------------------------

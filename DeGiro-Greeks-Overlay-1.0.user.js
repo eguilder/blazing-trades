@@ -462,7 +462,8 @@
 
     function showSummary(
         totalTheta,
-        deltaByTicker
+        deltaByTicker,
+        thetaByTicker
     ) {
 
         const bar = ensurePanel();
@@ -472,8 +473,32 @@
                 ? '#f87171'
                 : '#4ade80';
 
-        const tickerLines =
+        const thetaLines =
+            Object.entries(thetaByTicker)
+                .sort(([left], [right]) =>
+                    left.localeCompare(right)
+                )
+                .map(([ticker, theta]) => {
+
+                    const color =
+                        theta >= 0
+                            ? '#4ade80'
+                            : '#f87171';
+
+                    return `<div style="display:flex; justify-content:space-between; gap:16px;">`
+                        + `<span style="color:#94a3b8;">${ticker}</span>`
+                        + `<span style="color:${color}; font-weight:bold;">`
+                        + `${theta.toFixed(2)}`
+                        + `</span>`
+                        + `</div>`;
+                })
+                .join('');
+
+        const deltaLines =
             Object.entries(deltaByTicker)
+                .sort(([left], [right]) =>
+                    left.localeCompare(right)
+                )
                 .map(([ticker, syntheticShares]) => {
 
                     const color =
@@ -512,10 +537,13 @@
             + `<span style="color:${thetaColor}; font-weight:bold;">`
             + `${totalTheta.toFixed(2)}</span>`
             + `</div>`
+            + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px;`
+            + ` text-transform:uppercase; letter-spacing:0.05em;">Theta by Ticker</div>`
+            + thetaLines
             + `<div style="border-top:1px solid #334155; margin-bottom:8px;"></div>`
             + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px;`
             + ` text-transform:uppercase; letter-spacing:0.05em;">Synthetic Shares</div>`
-            + tickerLines
+            + deltaLines
             + `<div style="border-top:1px solid #334155; margin-top:8px; padding-top:6px;`
             + ` color:#475569; font-size:11px; text-align:right;">`
             + `Updated ${timestamp}`
@@ -547,6 +575,7 @@
             );
 
         let totalTheta = 0;
+        const thetaByTicker = {};
         const deltaByTicker = {};
         let rendered = 0;
 
@@ -582,12 +611,24 @@
                     g.theta
                 );
 
-            totalTheta +=
-                g.positionTheta || 0;
+            if (g.positionTheta != null) {
+
+                const ticker =
+                    g.underlying ||
+                    position.underlying;
+
+                totalTheta +=
+                    g.positionTheta;
+
+                thetaByTicker[ticker] =
+                    (thetaByTicker[ticker] || 0)
+                    + g.positionTheta;
+            }
 
             if (g.positionDelta != null) {
 
                 const ticker =
+                    g.underlying ||
                     position.underlying;
 
                 deltaByTicker[ticker] =
@@ -602,7 +643,8 @@
 
             showSummary(
                 totalTheta,
-                deltaByTicker
+                deltaByTicker,
+                thetaByTicker
             );
         }
 
