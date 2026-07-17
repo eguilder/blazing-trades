@@ -68,9 +68,13 @@ Two Tampermonkey userscripts that enhance the DeGiro portfolio page with options
 
 ## Installation
 
-1. Open Tampermonkey → **Create new script**
-2. Paste the contents of the script file
-3. Save — the script activates automatically on the DeGiro portfolio page
+1. Open the raw userscript URL in your browser:
+   - [DeGiro Options Month Buttons](https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js)
+   - [DeGiro Greeks Overlay](https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Greeks-Overlay-1.0.user.js)
+2. Tampermonkey should open its install screen automatically.
+3. Install or update the script from that screen.
+
+If an existing manually pasted script does not detect updates, remove that Tampermonkey copy and reinstall it from the raw URL above. Future updates use the script's `@updateURL` and `@downloadURL` metadata.
 
 ---
 
