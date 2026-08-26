@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.0.3
+// @version      1.0.4
 // @description  Quick month selection buttons for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -22,15 +22,15 @@
     }
 
     const MONTHS = [
-        'JAN','FEB','MAR','APR','MAY','JUN',
-        'JUL','AUG','SEP','OCT','NOV','DEC'
+        'JAN','FEB','MRT','APR','MEI','JUN',
+        'JUL','AUG','SEP','OKT','NOV','DEC'
     ];
 
     let currentFilter = 'ALL';
     let currentTickerFilter = 'ALL';
 
         function extractMonth(text) {
-        const m = text.match(/\d{1,2}(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}/i);
+        const m = text.match(/\d{1,2}(JAN|FEB|MRT|APR|MEI|JUN|JUL|AUG|SEP|OKT|NOV|DEC)\d{2}/i);
         return m ? m[1].toUpperCase() : null;
     }
 
