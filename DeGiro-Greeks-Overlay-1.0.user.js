@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.0.3
+// @version      1.0.4
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -29,14 +29,14 @@
     const MONTHS = {
         JAN:'01',
         FEB:'02',
-        MAR:'03',
+        MRT:'03',
         APR:'04',
-        MAY:'05',
+        MEI:'05',
         JUN:'06',
         JUL:'07',
         AUG:'08',
         SEP:'09',
-        OCT:'10',
+        OKT:'10',
         NOV:'11',
         DEC:'12'
     };
