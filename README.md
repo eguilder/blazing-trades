@@ -219,9 +219,9 @@ with `--option-exchange` if a specific venue is required.
 
 **File:** `max_pain_ibkr.py`
 
-Fetches one expiration from IBKR and prints two levels: standard open-interest max pain (lowest aggregate expiration payout) and a premium-weighted level (the greatest current premium, weighted by open interest, that would expire worthless). Premium max pain is a diagnostic based on bid/ask midpoint or last trade; standard max pain uses open interest and expiration payouts.
+Fetches one expiration from IBKR, calculates standard open-interest max pain, and prints the five strikes with the lowest aggregate expiration payout.
 
-The script requests actual contracts for the selected expiration with `reqContractDetails`, which avoids invalid strike/expiration combinations returned by a Cartesian option-chain definition. It uses streaming market-data requests so delayed open-interest ticks have time to arrive. This has been verified with MPWR.
+The script requests actual contracts for the selected expiration with `reqContractDetails`, which avoids invalid strike/expiration combinations returned by a Cartesian option-chain definition. It uses streaming market-data requests so delayed open-interest ticks have time to arrive, and reports progress while connecting, loading contracts, waiting for ticks, and calculating payouts. This has been verified with MPWR.
 
 ```powershell
 py -3 .\max_pain_ibkr.py AAPL 2026-09-18 --market-data-type 3 --output aapl_max_pain.csv --chain-output aapl_chain.csv
