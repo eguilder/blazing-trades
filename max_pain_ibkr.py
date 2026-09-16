@@ -34,7 +34,7 @@ def valid_number(value: object) -> bool:
 
 
 def calculate_max_pain(rows: Iterable[OptionRow]) -> dict[str, object]:
-    """Calculate OI payout max pain and the five lowest-payout strikes.
+    """Calculate OI payout max pain and the ten lowest-payout strikes.
 
     Candidate settlement prices are the strikes present in the chain.  A call
     pays max(S-K, 0), while a put pays max(K-S, 0), per share.
@@ -58,11 +58,12 @@ def calculate_max_pain(rows: Iterable[OptionRow]) -> dict[str, object]:
         payout_by_strike[settlement] = payout
 
     oi_level = min(payout_by_strike, key=lambda strike: (payout_by_strike[strike], strike))
-    top_five = sorted(payout_by_strike.items(), key=lambda item: (item[1], item[0]))[:5]
+    top_ten = sorted(payout_by_strike.items(), key=lambda item: (item[1], item[0]))[:10]
+    top_ten.sort(key=lambda item: item[0])
     return {
         "max_pain_strike": oi_level,
         "max_pain_payout": payout_by_strike[oi_level],
-        "top_five": top_five,
+        "top_ten": top_ten,
         "payout_by_strike": payout_by_strike,
     }
 
@@ -215,8 +216,8 @@ def main() -> int:
         print(f"{args.symbol.upper()} {expiration}: {len(rows)} option legs, multiplier {multiplier:g}")
         print(f"OI max pain:        {result['max_pain_strike']:.2f} "
               f"(expiration payout ${result['max_pain_payout']:,.0f})")
-        print("Top 5 lowest expiration payouts:")
-        for rank, (strike, payout) in enumerate(result["top_five"], start=1):
+        print("Top 10 lowest expiration payouts (ordered by strike):")
+        for rank, (strike, payout) in enumerate(result["top_ten"], start=1):
             print(f"  {rank}. {strike:.2f} -> ${payout:,.0f}")
         if args.output:
             write_csv(args.output, result)
