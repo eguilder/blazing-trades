@@ -215,7 +215,27 @@ with `--option-exchange` if a specific venue is required.
 
 ---
 
-# Section 4 — Realized P&L Report
+# Section 4 - IBKR Option Max Pain
+
+**File:** `max_pain_ibkr.py`
+
+Fetches one expiration from IBKR and prints two levels: standard open-interest max pain (lowest aggregate expiration payout) and a premium-weighted level (the greatest current premium, weighted by open interest, that would expire worthless). Premium max pain is a diagnostic based on bid/ask midpoint or last trade; standard max pain uses open interest and expiration payouts.
+
+The script requests actual contracts for the selected expiration with `reqContractDetails`, which avoids invalid strike/expiration combinations returned by a Cartesian option-chain definition. It uses streaming market-data requests so delayed open-interest ticks have time to arrive. This has been verified with MPWR.
+
+```powershell
+py -3 .\max_pain_ibkr.py AAPL 2026-09-18 --market-data-type 3 --output aapl_max_pain.csv --chain-output aapl_chain.csv
+```
+
+For example:
+
+```powershell
+py -3 .\max_pain_ibkr.py MPWR 2026-09-18 --market-data-type 3
+```
+
+TWS or IB Gateway must be running with API access enabled. Use `--market-data-type 1` for live data when the account has the required subscriptions. The default connection is `127.0.0.1:7496` with client id `779`; override with `--host`, `--port`, and `--client-id`.
+
+# Section 5 — Realized P&L Report
 
 Generates a realized P&L report from a broker CSV export (e.g. DeGiro transaction history). Produces a per-product, per-month breakdown using FIFO lot matching.
 
