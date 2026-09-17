@@ -77,8 +77,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=os.getenv("IB_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("IB_PORT", "7496")))
     parser.add_argument("--client-id", type=int, default=int(os.getenv("IB_MAX_PAIN_CLIENT_ID", "779")))
-    parser.add_argument("--exchange", default=os.getenv("IB_OPTION_EXCHANGE", "SMART"))
-    parser.add_argument("--currency", default="USD")
+    parser.add_argument("--exchange", default=os.getenv("IB_OPTION_EXCHANGE", "SMART"),
+                        help="IBKR exchange for the underlying and options (default: SMART)")
+    parser.add_argument("--currency", default=os.getenv("IB_OPTION_CURRENCY", "USD"),
+                        help="Contract currency (default: USD; use EUR for FTA listings)")
     parser.add_argument("--market-data-type", type=int, choices=(1, 2, 3, 4), default=3,
                         help="1 live, 2 frozen, 3 delayed, 4 delayed-frozen (default: 3)")
     parser.add_argument("--timeout", type=float, default=12.0,
