@@ -7,6 +7,7 @@ A collection of options trading tools covering OPEX analysis and live Greeks ove
 # Project Structure
 
 ```text
+├── max_pain_ibkr.py                 # IBKR option-chain max pain calculator
 ├── opex_spot.py                     # OPEX data pipeline
 ├── opex_spot.html                   # OPEX dashboard
 ├── greeks_service.py                # Greeks API server (Flask + IBKR)
