@@ -201,6 +201,7 @@ def greeks():
     positions = request.get_json(force=True)
 
     results = []
+    pending_by_key = {}
 
     for pos in positions:
 
@@ -236,10 +237,6 @@ def greeks():
             right
         )
 
-        # ---------------------------------------------------------------------
-        # CACHE
-        # ---------------------------------------------------------------------
-
         if key in cache:
 
             age = time.time() - cache[key]["timestamp"]
@@ -266,116 +263,107 @@ def greeks():
 
                 continue
 
-        # ---------------------------------------------------------------------
-        # CONTRACT
-        # ---------------------------------------------------------------------
-
-        print(
-            f"{underlying} -> "
-            f"{symbol} "
-            f"{right}{strike} "
-            f"{expiry} "
-            f"qty={qty}"
-        )
-
-        contract = build_contract(
-            symbol,
-            trading_class,
-            exchange,
-            expiry,
-            strike,
-            right
-        )
-
-        qualified = ib.qualifyContracts(contract)
-
-        if not qualified:
-
-            results.append({
-                "rowId": row_id,
-                "key": key,
-                "error": "Contract not found"
-            })
-
-            continue
-
-        contract = qualified[0]
-
-        # ---------------------------------------------------------------------
-        # MARKET DATA
-        # ---------------------------------------------------------------------
-
-        ticker = ib.reqMktData(
-            contract,
-            "",
-            False,
-            False
-        )
-
-        ib.sleep(3)
-
-        g = ticker.modelGreeks
-
-        if g:
-
-            delta = g.delta
-            theta = g.theta
-            gamma = g.gamma
-            vega = g.vega
-            underlying_price = getattr(g, "undPrice", None)
-
-        else:
-
-            delta = None
-            theta = None
-            gamma = None
-            vega = None
-            underlying_price = None
-
-        in_the_money = None
-        if underlying_price is not None:
-            in_the_money = (
-                underlying_price > strike
-                if right == "C"
-                else underlying_price < strike
-            )
-
-        ib.cancelMktData(contract)
-
-        # ---------------------------------------------------------------------
-        # CACHE
-        # ---------------------------------------------------------------------
-
-        cache[key] = {
-            "timestamp": time.time(),
+        pending_by_key.setdefault(key, {
+            "key": key,
+            "underlying": underlying,
+            "symbol": symbol,
+            "tradingClass": trading_class,
+            "exchange": exchange,
             "multiplier": multiplier,
-            "delta": delta,
-            "theta": theta,
-            "gamma": gamma,
-            "vega": vega,
-            "underlyingPrice": underlying_price,
-            "inTheMoney": in_the_money
+            "expiry": expiry,
+            "strike": strike,
+            "right": right,
+            "contract": build_contract(
+                symbol,
+                trading_class,
+                exchange,
+                expiry,
+                strike,
+                right
+            )
+        })
+
+    if pending_by_key:
+        print(f"Batch qualifying {len(pending_by_key)} uncached option contracts...")
+        pending_items = list(pending_by_key.values())
+        qualified = ib.qualifyContracts(
+            *(item["contract"] for item in pending_items)
+        )
+
+        valid_items = []
+        for index, item in enumerate(pending_items):
+            contract = qualified[index] if index < len(qualified) else None
+            if not getattr(contract, "conId", 0):
+                item["error"] = "Contract not found"
+                continue
+            item["contract"] = contract
+            valid_items.append(item)
+
+        print(f"Requesting Greeks for {len(valid_items)} contracts concurrently...")
+        tickers = {
+            item["key"]: ib.reqMktData(item["contract"], "", False, False)
+            for item in valid_items
         }
 
-        # ---------------------------------------------------------------------
-        # RESPONSE
-        # ---------------------------------------------------------------------
+        if tickers:
+            # All subscriptions are active before waiting, so this is one
+            # shared wait instead of three seconds per position.
+            ib.sleep(3)
 
-        results.append(
-            build_result(
-                row_id,
-                key,
-                underlying,
-                multiplier,
-                delta,
-                theta,
-                gamma,
-                vega,
-                underlying_price,
-                in_the_money,
-                qty
-            )
-        )
+        for item in valid_items:
+            ticker = tickers[item["key"]]
+            g = ticker.modelGreeks
+            if g:
+                delta = g.delta
+                theta = g.theta
+                gamma = g.gamma
+                vega = g.vega
+                underlying_price = getattr(g, "undPrice", None)
+            else:
+                delta = theta = gamma = vega = underlying_price = None
+
+            in_the_money = None
+            if underlying_price is not None:
+                in_the_money = (
+                    underlying_price > item["strike"]
+                    if item["right"] == "C"
+                    else underlying_price < item["strike"]
+                )
+
+            cache[item["key"]] = {
+                "timestamp": time.time(),
+                "multiplier": item["multiplier"],
+                "delta": delta,
+                "theta": theta,
+                "gamma": gamma,
+                "vega": vega,
+                "underlyingPrice": underlying_price,
+                "inTheMoney": in_the_money
+            }
+            ib.cancelMktData(item["contract"])
+
+    # Build responses in the same order as the submitted portfolio positions.
+    for pos in positions:
+        row_id = pos.get("rowId")
+        underlying = pos.get("underlying")
+        if underlying not in UNDERLYINGS:
+            continue
+        info = UNDERLYINGS[underlying]
+        expiry = pos["expiry"]
+        strike = float(pos["strike"])
+        right = pos["right"]
+        qty = int(pos.get("qty", 1))
+        key = cache_key(underlying, expiry, strike, right)
+
+        if key in cache:
+            c = cache[key]
+            results.append(build_result(
+                row_id, key, underlying, c["multiplier"], c["delta"],
+                c["theta"], c["gamma"], c["vega"],
+                c.get("underlyingPrice"), c.get("inTheMoney"), qty
+            ))
+        elif key in pending_by_key and pending_by_key[key].get("error"):
+            results.append({"rowId": row_id, "key": key, "error": pending_by_key[key]["error"]})
 
     return jsonify(add_theta_summary(results))
 
