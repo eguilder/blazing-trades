@@ -130,6 +130,8 @@ def build_result(
     theta,
     gamma,
     vega,
+    underlying_price,
+    in_the_money,
     qty
 ):
 
@@ -142,6 +144,8 @@ def build_result(
         "theta": theta,
         "gamma": gamma,
         "vega": vega,
+        "underlyingPrice": underlying_price,
+        "inTheMoney": in_the_money,
         "positionDelta":
             delta * qty * multiplier
             if delta is not None else None,
@@ -254,6 +258,8 @@ def greeks():
                         c["theta"],
                         c["gamma"],
                         c["vega"],
+                        c.get("underlyingPrice"),
+                        c.get("inTheMoney"),
                         qty
                     )
                 )
@@ -316,6 +322,7 @@ def greeks():
             theta = g.theta
             gamma = g.gamma
             vega = g.vega
+            underlying_price = getattr(g, "undPrice", None)
 
         else:
 
@@ -323,6 +330,15 @@ def greeks():
             theta = None
             gamma = None
             vega = None
+            underlying_price = None
+
+        in_the_money = None
+        if underlying_price is not None:
+            in_the_money = (
+                underlying_price > strike
+                if right == "C"
+                else underlying_price < strike
+            )
 
         ib.cancelMktData(contract)
 
@@ -336,7 +352,9 @@ def greeks():
             "delta": delta,
             "theta": theta,
             "gamma": gamma,
-            "vega": vega
+            "vega": vega,
+            "underlyingPrice": underlying_price,
+            "inTheMoney": in_the_money
         }
 
         # ---------------------------------------------------------------------
@@ -353,6 +371,8 @@ def greeks():
                 theta,
                 gamma,
                 vega,
+                underlying_price,
+                in_the_money,
                 qty
             )
         )

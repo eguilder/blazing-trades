@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.0.4
+// @version      1.1.0
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -25,6 +25,21 @@
     }
 
     const API_URL = 'http://127.0.0.1:5000/greeks';
+
+    const itmStyle = document.createElement('style');
+    itmStyle.textContent = `
+        tr.tm-itm-option > td {
+            border-top: 2px solid #dc2626 !important;
+            border-bottom: 2px solid #dc2626 !important;
+        }
+        tr.tm-itm-option > td:first-child {
+            border-left: 2px solid #dc2626 !important;
+        }
+        tr.tm-itm-option > td:last-child {
+            border-right: 2px solid #dc2626 !important;
+        }
+    `;
+    document.head.appendChild(itmStyle);
 
     const MONTHS = {
         JAN:'01',
@@ -241,6 +256,20 @@
         return value != null
             ? Number(value).toFixed(3)
             : '-';
+    }
+
+    function updateItmHighlight(row, inTheMoney) {
+
+        row.classList.toggle(
+            'tm-itm-option',
+            inTheMoney === true
+        );
+
+        if (inTheMoney === true) {
+            row.title = 'In the money';
+        } else if (row.title === 'In the money') {
+            row.removeAttribute('title');
+        }
     }
 
     function removeOverlayColumnsOutside(table) {
@@ -600,6 +629,11 @@
                 ensureCells(
                     position.row
                 );
+
+            updateItmHighlight(
+                position.row,
+                g.inTheMoney
+            );
 
             cells.delta.textContent =
                 formatGreek(

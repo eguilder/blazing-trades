@@ -114,6 +114,8 @@ Fetches live option Greeks from a local IBKR-connected API server (`greeks_servi
 | Portfolio Θ | Total theta across all positions (`theta × qty × multiplier`) |
 | Synthetic Shares | Per-ticker delta exposure (`delta × qty × multiplier`), showing the equivalent share position each underlying's options represent |
 
+Options that IBKR identifies as in the money are outlined with a red border in the portfolio table. The service derives this from the underlying price in IBKR model Greeks: calls are in the money when spot is above the strike, and puts when spot is below the strike.
+
 ### Greeks Service Setup
 
 The script requires `greeks_service.py` to be running locally:
