@@ -20,6 +20,13 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 
 from ib_insync import IB, Option, Stock  # noqa: E402
 
+TRADING_CLASS_BY_SYMBOL = {
+    "ASML": "ASL",
+    "ADYEN": "ADY",
+    "BESI": "BESI",
+    "ING": "ING",
+}
+
 
 @dataclass(frozen=True)
 class OptionRow:
@@ -81,6 +88,7 @@ def parse_args() -> argparse.Namespace:
                         help="IBKR exchange for the underlying and options (default: SMART)")
     parser.add_argument("--currency", default=os.getenv("IB_OPTION_CURRENCY", "USD"),
                         help="Contract currency (default: USD; use EUR for FTA listings)")
+    parser.add_argument("--trading-class", help="IBKR option trading class, e.g. ASL for ASML")
     parser.add_argument("--market-data-type", type=int, choices=(1, 2, 3, 4), default=3,
                         help="1 live, 2 frozen, 3 delayed, 4 delayed-frozen (default: 3)")
     parser.add_argument("--timeout", type=float, default=12.0,
@@ -107,17 +115,23 @@ def connect(args: argparse.Namespace) -> IB:
 def fetch_rows(ib: IB, args: argparse.Namespace, expiration: str) -> tuple[list[OptionRow], float]:
     print(f"Qualifying underlying {args.symbol.upper()}...")
     underlying = Stock(args.symbol.upper(), args.exchange, args.currency)
-    qualified = ib.qualifyContracts(underlying)
-    if not qualified:
-        raise RuntimeError(f"Could not qualify underlying {args.symbol}")
-    underlying = qualified[0]
+    trading_class = args.trading_class or TRADING_CLASS_BY_SYMBOL.get(args.symbol.upper())
+    # FTA option contracts identify the underlying through their trading class;
+    # the corresponding stock may not qualify under the option exchange code.
+    if trading_class:
+        print(f"Using option trading class {trading_class}.")
+    else:
+        qualified = ib.qualifyContracts(underlying)
+        if not qualified:
+            raise RuntimeError(f"Could not qualify underlying {args.symbol}")
+        underlying = qualified[0]
 
     # Ask for the exact expiration first.  Unlike reqSecDefOptParams (which
     # returns separate strike/expiry sets whose Cartesian product can contain
     # invalid combinations), reqContractDetails returns actual contracts.
     template = Option(
         underlying.symbol, expiration, 0, "", args.exchange,
-        currency=args.currency,
+        currency=args.currency, tradingClass=trading_class or "",
     )
     details = ib.reqContractDetails(template)
     contracts = [detail.contract for detail in details if detail.contract.conId]
@@ -127,9 +141,14 @@ def fetch_rows(ib: IB, args: argparse.Namespace, expiration: str) -> tuple[list[
     # Fall back to the security-definition route in that case.
     definitions = ib.reqSecDefOptParams(
         underlying.symbol, "", underlying.secType, underlying.conId
-    ) if not contracts else []
+    ) if not contracts and getattr(underlying, "conId", 0) else []
     matching = [d for d in definitions if expiration in d.expirations]
     if not contracts and not matching:
+        if trading_class:
+            raise RuntimeError(
+                f"No valid {trading_class} option contracts were found for "
+                f"{underlying.symbol} {expiration} on {args.exchange}"
+            )
         available = sorted({e for d in definitions for e in d.expirations})
         raise RuntimeError(f"Expiration {expiration} is unavailable. Recent expirations: {available[:8]}")
     if contracts:

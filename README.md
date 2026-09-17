@@ -240,7 +240,7 @@ py -3 .\max_pain_ibkr.py ASML 2026-09-18 --exchange FTA --currency EUR --market-
 py -3 .\max_pain_ibkr.py ADYEN 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
 ```
 
-The contract multiplier is read from IBKR, so instruments such as ADYEN (typically multiplier 10) and ASML (typically multiplier 100) are handled without hard-coded values. The max-pain calculation uses expiration intrinsic value and open interest; European exercise style does not change that expiration calculation.
+The script automatically uses IBKR trading classes `ASL` for ASML and `ADY` for ADYEN. You can override this with `--trading-class` when needed. The contract multiplier is read from IBKR, so instruments such as ADYEN (typically multiplier 10) and ASML (typically multiplier 100) are handled without hard-coded values. The max-pain calculation uses expiration intrinsic value and open interest; European exercise style does not change that expiration calculation.
 
 TWS or IB Gateway must be running with API access enabled. Use `--market-data-type 1` for live data when the account has the required subscriptions. The default connection is `127.0.0.1:7496` with client id `779`; override with `--host`, `--port`, and `--client-id`.
 
