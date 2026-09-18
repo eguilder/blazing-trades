@@ -112,7 +112,9 @@ def connect(args: argparse.Namespace) -> IB:
     return ib
 
 
-def fetch_rows(ib: IB, args: argparse.Namespace, expiration: str) -> tuple[list[OptionRow], float]:
+def fetch_rows(
+    ib: IB, args: argparse.Namespace, expiration: str,
+) -> tuple[list[OptionRow], float, float | None]:
     print(f"Qualifying underlying {args.symbol.upper()}...")
     underlying = Stock(args.symbol.upper(), args.exchange, args.currency)
     trading_class = args.trading_class or TRADING_CLASS_BY_SYMBOL.get(args.symbol.upper())
@@ -174,6 +176,16 @@ def fetch_rows(ib: IB, args: argparse.Namespace, expiration: str) -> tuple[list[
             raise RuntimeError(
                 f"No valid option contracts were found for {underlying.symbol} {expiration}"
             )
+    # Stock quotes for option-specific venues (such as FTA) use SMART.
+    if trading_class:
+        qualified = ib.qualifyContracts(Stock(underlying.symbol, "SMART", args.currency))
+        quote_underlying = qualified[0] if qualified else None
+    else:
+        quote_underlying = underlying
+    underlying_ticker = (
+        ib.reqMktData(quote_underlying, "", snapshot=False, regulatorySnapshot=False)
+        if quote_underlying is not None else None
+    )
     print(f"Requesting open interest for {len(contracts)} contracts...")
     # Use streaming requests, matching the working Greeks service.
     tickers = [ib.reqMktData(contract, "101", snapshot=False, regulatorySnapshot=False)
@@ -182,6 +194,18 @@ def fetch_rows(ib: IB, args: argparse.Namespace, expiration: str) -> tuple[list[
     print(f"Waiting up to {args.timeout:g} seconds for open-interest ticks...")
     while time.monotonic() < deadline:
         ib.sleep(0.25)
+
+    current_price = underlying_ticker.marketPrice() if underlying_ticker is not None else None
+    if not valid_number(current_price) or current_price <= 0:
+        # Option model ticks can supply the underlying price when a separate
+        # stock quote is unavailable. Do not substitute yesterday's close.
+        current_price = next((
+            float(ticker.modelGreeks.undPrice)
+            for ticker in tickers
+            if ticker.modelGreeks is not None
+            and valid_number(ticker.modelGreeks.undPrice)
+            and ticker.modelGreeks.undPrice > 0
+        ), None)
 
     rows: list[OptionRow] = []
     for contract, ticker in zip(contracts, tickers):
@@ -195,8 +219,10 @@ def fetch_rows(ib: IB, args: argparse.Namespace, expiration: str) -> tuple[list[
         ))
     for contract in contracts:
         ib.cancelMktData(contract)
+    if quote_underlying is not None:
+        ib.cancelMktData(quote_underlying)
     print(f"Received open interest for {len(rows)} of {len(contracts)} contracts.")
-    return rows, multiplier
+    return rows, multiplier, current_price
 
 
 def write_csv(path: str, result: dict[str, object]) -> None:
@@ -225,7 +251,7 @@ def main() -> int:
     ib = connect(args)
     print("Connected.")
     try:
-        rows, multiplier = fetch_rows(ib, args, expiration)
+        rows, multiplier, current_price = fetch_rows(ib, args, expiration)
         if not rows:
             raise RuntimeError(
                 "No option open-interest quotes were returned. Check that the "
@@ -237,6 +263,19 @@ def main() -> int:
         print(f"{args.symbol.upper()} {expiration}: {len(rows)} option legs, multiplier {multiplier:g}")
         print(f"OI max pain:        {result['max_pain_strike']:.2f} "
               f"(expiration payout ${result['max_pain_payout']:,.0f})")
+        if current_price is not None:
+            payouts = result["payout_by_strike"]
+            below = max((strike for strike in payouts if strike < current_price), default=None)
+            above = min((strike for strike in payouts if strike > current_price), default=None)
+            print(f"Underlying price:   {current_price:.2f} {args.currency}")
+            for side, strike in (("below", below), ("above", above)):
+                if strike is None:
+                    print(f"Nearest strike {side} spot: unavailable (no fetched strike {side} spot)")
+                else:
+                    print(f"Nearest strike {side} spot: {strike:.2f} "
+                          f"(total expiration payout {payouts[strike]:,.0f} {args.currency})")
+        else:
+            print("Nearest-strike totals unavailable: no underlying price returned by IBKR.")
         print("Top 10 lowest expiration payouts (ordered by strike):")
         for rank, (strike, payout) in enumerate(result["top_ten"], start=1):
             print(f"  {rank}. {strike:.2f} -> ${payout:,.0f}")

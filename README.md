@@ -226,6 +226,8 @@ with `--option-exchange` if a specific venue is required.
 
 Fetches one expiration from IBKR, calculates standard open-interest max pain, and prints the ten strikes with the lowest aggregate expiration payout, ordered by strike.
 
+Also prints the underlying price and the total expiration payout at each of the closest available strikes strictly below and above that price. If spot equals a strike, it uses the neighboring strikes on either side. Each total uses intrinsic value times open interest and the contract multiplier across the fetched chain. The underlying price follows the selected market-data type, so it may be delayed or frozen. If neither a stock quote nor an option model's underlying price is available, the script reports the nearest-strike totals as unavailable. If there is no fetched strike on one side of spot, that side is reported as unavailable.
+
 The script requests actual contracts for the selected expiration with `reqContractDetails`, which avoids invalid strike/expiration combinations returned by a Cartesian option-chain definition. It uses streaming market-data requests so delayed open-interest ticks have time to arrive, and reports progress while connecting, loading contracts, waiting for ticks, and calculating payouts. This has been verified with MPWR.
 
 ```powershell
