@@ -112,6 +112,7 @@ Fetches live option Greeks from a local IBKR-connected API server (`greeks_servi
 
 | Field | Description |
 |---|---|
+| Premium by Ticker | Current extrinsic/time premium value per ticker, excluding intrinsic ITM value |
 | Portfolio Θ | Total theta across all positions (`theta × qty × multiplier`) |
 | Synthetic Shares | Per-ticker delta exposure (`delta × qty × multiplier`), showing the equivalent share position each underlying's options represent |
 

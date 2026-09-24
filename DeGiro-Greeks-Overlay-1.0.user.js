@@ -492,7 +492,8 @@
     function showSummary(
         totalTheta,
         deltaByTicker,
-        thetaByTicker
+        thetaByTicker,
+        premiumByTicker
     ) {
 
         const bar = ensurePanel();
@@ -544,6 +545,27 @@
                 })
                 .join('');
 
+        const premiumLines =
+            Object.entries(premiumByTicker)
+                .sort(([left], [right]) =>
+                    left.localeCompare(right)
+                )
+                .map(([ticker, premium]) => {
+
+                    const color =
+                        premium >= 0
+                            ? '#4ade80'
+                            : '#f87171';
+
+                    return `<div style="display:flex; justify-content:space-between; gap:16px;">`
+                        + `<span style="color:#94a3b8;">${ticker}</span>`
+                        + `<span style="color:${color}; font-weight:bold;">`
+                        + `€${premium.toFixed(2)}`
+                        + `</span>`
+                        + `</div>`;
+                })
+                .join('');
+
         const timestamp =
             fetchedAt
                 ? fetchedAt.toLocaleTimeString(
@@ -570,6 +592,10 @@
             + ` text-transform:uppercase; letter-spacing:0.05em;">Theta by Ticker</div>`
             + thetaLines
             + `<div style="border-top:1px solid #334155; margin-bottom:8px;"></div>`
+            + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px;`
+            + ` text-transform:uppercase; letter-spacing:0.05em;">Premium by Ticker</div>`
+            + premiumLines
+            + `<div style="border-top:1px solid #334155; margin:8px 0;"></div>`
             + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px;`
             + ` text-transform:uppercase; letter-spacing:0.05em;">Synthetic Shares</div>`
             + deltaLines
@@ -606,6 +632,7 @@
         let totalTheta = 0;
         const thetaByTicker = {};
         const deltaByTicker = {};
+        const premiumByTicker = {};
         let rendered = 0;
 
         greeks.forEach((g, idx) => {
@@ -670,6 +697,17 @@
                     + g.positionDelta;
             }
 
+            if (g.positionPremium != null) {
+
+                const ticker =
+                    g.underlying ||
+                    position.underlying;
+
+                premiumByTicker[ticker] =
+                    (premiumByTicker[ticker] || 0)
+                    + g.positionPremium;
+            }
+
             rendered += 1;
         });
 
@@ -678,7 +716,8 @@
             showSummary(
                 totalTheta,
                 deltaByTicker,
-                thetaByTicker
+                thetaByTicker,
+                premiumByTicker
             );
         }
 

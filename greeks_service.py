@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 import time
 from collections import defaultdict
@@ -132,7 +133,8 @@ def build_result(
     vega,
     underlying_price,
     in_the_money,
-    qty
+    qty,
+    premium_price
 ):
 
     return {
@@ -151,8 +153,62 @@ def build_result(
             if delta is not None else None,
         "positionTheta":
             theta * qty * multiplier
-            if theta is not None else None
+            if theta is not None else None,
+        "premiumPrice": premium_price,
+        "positionPremium":
+            premium_price * qty * multiplier
+            if premium_price is not None else None
     }
+
+
+def current_premium_price(ticker, underlying_price, strike, right):
+
+    try:
+        market_price = ticker.marketPrice()
+    except Exception:
+        market_price = None
+
+    if not (
+        isinstance(market_price, (int, float))
+        and math.isfinite(market_price)
+    ):
+        bid = getattr(ticker, "bid", None)
+        ask = getattr(ticker, "ask", None)
+        if (
+            isinstance(bid, (int, float))
+            and math.isfinite(bid)
+            and isinstance(ask, (int, float))
+            and math.isfinite(ask)
+        ):
+            market_price = (bid + ask) / 2
+        else:
+            for value in (
+                getattr(ticker, "last", None),
+                getattr(ticker, "close", None)
+            ):
+                if isinstance(value, (int, float)) and math.isfinite(value):
+                    market_price = value
+                    break
+
+    if not (
+        isinstance(market_price, (int, float))
+        and math.isfinite(market_price)
+    ):
+        return None
+
+    if (
+        isinstance(underlying_price, (int, float))
+        and math.isfinite(underlying_price)
+    ):
+        intrinsic_value = max(
+            underlying_price - strike
+            if right == "C"
+            else strike - underlying_price,
+            0
+        )
+        return max(market_price - intrinsic_value, 0)
+
+    return market_price
 
 
 def add_theta_summary(results):
@@ -257,7 +313,8 @@ def greeks():
                         c["vega"],
                         c.get("underlyingPrice"),
                         c.get("inTheMoney"),
-                        qty
+                        qty,
+                        c.get("premiumPrice")
                     )
                 )
 
@@ -322,6 +379,13 @@ def greeks():
             else:
                 delta = theta = gamma = vega = underlying_price = None
 
+            premium_price = current_premium_price(
+                ticker,
+                underlying_price,
+                item["strike"],
+                item["right"]
+            )
+
             in_the_money = None
             if underlying_price is not None:
                 in_the_money = (
@@ -338,7 +402,8 @@ def greeks():
                 "gamma": gamma,
                 "vega": vega,
                 "underlyingPrice": underlying_price,
-                "inTheMoney": in_the_money
+                "inTheMoney": in_the_money,
+                "premiumPrice": premium_price
             }
             ib.cancelMktData(item["contract"])
 
@@ -360,7 +425,8 @@ def greeks():
             results.append(build_result(
                 row_id, key, underlying, c["multiplier"], c["delta"],
                 c["theta"], c["gamma"], c["vega"],
-                c.get("underlyingPrice"), c.get("inTheMoney"), qty
+                c.get("underlyingPrice"), c.get("inTheMoney"), qty,
+                c.get("premiumPrice")
             ))
         elif key in pending_by_key and pending_by_key[key].get("error"):
             results.append({"rowId": row_id, "key": key, "error": pending_by_key[key]["error"]})
