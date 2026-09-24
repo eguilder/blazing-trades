@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.1
+// @version      1.1.2
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -802,14 +802,35 @@
             greeks
         );
 
-        cachedGreeks = greeks;
+        const completeGreeks =
+            greeks.length === positions.length &&
+            greeks.every(g =>
+                Number.isFinite(Number(g.delta)) &&
+                Number.isFinite(Number(g.theta))
+            );
+
+        cachedGreeks = completeGreeks
+            ? greeks
+            : null;
+
         fetchedAt = new Date();
 
         scheduleRenderGreeks(
-            cachedGreeks
+            greeks
         );
 
-        return true;
+        if (!completeGreeks) {
+            console.warn(
+                'Incomplete Greeks received; retrying shortly'
+            );
+
+            refreshTimer = setTimeout(
+                refresh,
+                5000
+            );
+        }
+
+        return completeGreeks;
     }
 
     function refresh() {

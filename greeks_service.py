@@ -211,6 +211,15 @@ def current_premium_price(ticker, underlying_price, strike, right):
     return market_price
 
 
+def greeks_are_ready(greeks):
+
+    return (
+        greeks is not None
+        and greeks.delta is not None
+        and greeks.theta is not None
+    )
+
+
 def add_theta_summary(results):
 
     theta_by_ticker = defaultdict(float)
@@ -295,11 +304,14 @@ def greeks():
 
         if key in cache:
 
-            age = time.time() - cache[key]["timestamp"]
+            c = cache[key]
+            age = time.time() - c["timestamp"]
 
-            if age < CACHE_SECONDS:
-
-                c = cache[key]
+            if (
+                age < CACHE_SECONDS
+                and c.get("delta") is not None
+                and c.get("theta") is not None
+            ):
 
                 results.append(
                     build_result(
@@ -364,8 +376,16 @@ def greeks():
 
         if tickers:
             # All subscriptions are active before waiting, so this is one
-            # shared wait instead of three seconds per position.
-            ib.sleep(3)
+            # shared wait instead of waiting separately per position. Model
+            # Greeks can arrive after the first callback, so give IBKR a few
+            # short opportunities to populate delta and theta.
+            for _ in range(4):
+                ib.sleep(1)
+                if all(
+                    greeks_are_ready(ticker.modelGreeks)
+                    for ticker in tickers.values()
+                ):
+                    break
 
         for item in valid_items:
             ticker = tickers[item["key"]]
@@ -394,17 +414,18 @@ def greeks():
                     else underlying_price < item["strike"]
                 )
 
-            cache[item["key"]] = {
-                "timestamp": time.time(),
-                "multiplier": item["multiplier"],
-                "delta": delta,
-                "theta": theta,
-                "gamma": gamma,
-                "vega": vega,
-                "underlyingPrice": underlying_price,
-                "inTheMoney": in_the_money,
-                "premiumPrice": premium_price
-            }
+            if delta is not None and theta is not None:
+                cache[item["key"]] = {
+                    "timestamp": time.time(),
+                    "multiplier": item["multiplier"],
+                    "delta": delta,
+                    "theta": theta,
+                    "gamma": gamma,
+                    "vega": vega,
+                    "underlyingPrice": underlying_price,
+                    "inTheMoney": in_the_money,
+                    "premiumPrice": premium_price
+                }
             ib.cancelMktData(item["contract"])
 
     # Build responses in the same order as the submitted portfolio positions.
