@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.2
+// @version      1.1.3
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -23,6 +23,16 @@
     ) {
         return;
     }
+
+    // The DeGiro SPA can cause a userscript to be evaluated more than once.
+    // Keep one observer/request loop per page.
+    const INSTANCE_KEY = '__tmDeGiroGreeksOverlay';
+
+    if (window[INSTANCE_KEY]) {
+        return;
+    }
+
+    window[INSTANCE_KEY] = true;
 
     const API_URL = 'http://127.0.0.1:5000/greeks';
 
@@ -172,6 +182,71 @@
         });
 
         return positions;
+    }
+
+    function getPositionsSignature(positions) {
+
+        return JSON.stringify(
+            positions.map(position => ({
+                underlying: position.underlying,
+                expiry: position.expiry,
+                strike: position.strike,
+                right: position.right,
+                qty: position.qty
+            }))
+        );
+    }
+
+    const CACHE_KEY = 'tm-degiro-greeks-cache-v1';
+
+    function restoreCachedGreeks(signature, positions) {
+
+        try {
+
+            const stored =
+                JSON.parse(
+                    sessionStorage.getItem(CACHE_KEY)
+                );
+
+            if (!stored || stored.signature !== signature) {
+                return false;
+            }
+
+            // Row ids belong to the current DOM, not to the previous page
+            // render. Keep the cached values but bind them to current rows.
+            cachedGreeks = stored.greeks.map((greek, idx) => ({
+                ...greek,
+                rowId: positions[idx].rowId
+            }));
+            cachedSignature = signature;
+            fetchedAt = new Date(stored.fetchedAt);
+            return true;
+
+        } catch (e) {
+
+            sessionStorage.removeItem(CACHE_KEY);
+            return false;
+        }
+    }
+
+    function persistCachedGreeks(signature, greeks) {
+
+        try {
+
+            sessionStorage.setItem(
+                CACHE_KEY,
+                JSON.stringify({
+                    signature,
+                    greeks,
+                    fetchedAt: fetchedAt.toISOString()
+                })
+            );
+
+        } catch (e) {
+
+            // Caching is an optimization; private browsing/storage limits
+            // must not prevent the overlay from working.
+        }
     }
 
     function getOptionsTable() {
@@ -610,6 +685,7 @@
     let isLoading = false;
     let isRendering = false;
     let cachedGreeks = null;
+    let cachedSignature = null;
     let fetchedAt = null;
 
     function renderGreeks(greeks) {
@@ -765,6 +841,8 @@
             return false;
         }
 
+        const signature = getPositionsSignature(positions);
+
         console.log(
             'Sending positions:',
             positions
@@ -812,8 +890,18 @@
         cachedGreeks = completeGreeks
             ? greeks
             : null;
+        cachedSignature = completeGreeks
+            ? signature
+            : null;
 
         fetchedAt = new Date();
+
+        if (completeGreeks) {
+            persistCachedGreeks(
+                signature,
+                greeks
+            );
+        }
 
         scheduleRenderGreeks(
             greeks
@@ -839,13 +927,42 @@
             return;
         }
 
-        if (cachedGreeks) {
+        const positions = getPositions();
+
+        if (!positions.length) {
+            return;
+        }
+
+        const signature = getPositionsSignature(positions);
+
+        if (
+            !cachedGreeks &&
+            restoreCachedGreeks(
+                signature,
+                positions
+            )
+        ) {
+            scheduleRenderGreeks(
+                cachedGreeks
+            );
+            return;
+        }
+
+        if (
+            cachedGreeks &&
+            cachedSignature === signature
+        ) {
             scheduleRenderGreeks(
                 cachedGreeks
             );
 
             return;
         }
+
+        // The portfolio changed. The old result must not prevent the new
+        // signature from being fetched in the delayed part below.
+        cachedGreeks = null;
+        cachedSignature = null;
 
         clearTimeout(
             refreshTimer
