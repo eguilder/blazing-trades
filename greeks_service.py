@@ -171,14 +171,17 @@ def current_premium_price(ticker, underlying_price, strike, right):
     if not (
         isinstance(market_price, (int, float))
         and math.isfinite(market_price)
+        and market_price >= 0
     ):
         bid = getattr(ticker, "bid", None)
         ask = getattr(ticker, "ask", None)
         if (
             isinstance(bid, (int, float))
             and math.isfinite(bid)
+            and bid >= 0
             and isinstance(ask, (int, float))
             and math.isfinite(ask)
+            and ask >= 0
         ):
             market_price = (bid + ask) / 2
         else:
@@ -186,7 +189,11 @@ def current_premium_price(ticker, underlying_price, strike, right):
                 getattr(ticker, "last", None),
                 getattr(ticker, "close", None)
             ):
-                if isinstance(value, (int, float)) and math.isfinite(value):
+                if (
+                    isinstance(value, (int, float))
+                    and math.isfinite(value)
+                    and value >= 0
+                ):
                     market_price = value
                     break
 
@@ -376,16 +383,11 @@ def greeks():
 
         if tickers:
             # All subscriptions are active before waiting, so this is one
-            # shared wait instead of waiting separately per position. Model
-            # Greeks can arrive after the first callback, so give IBKR a few
-            # short opportunities to populate delta and theta.
+            # shared wait instead of waiting separately per position. Keep
+            # the full wait even when model Greeks arrive early: option quote
+            # fields used for the extrinsic premium often arrive afterward.
             for _ in range(4):
                 ib.sleep(1)
-                if all(
-                    greeks_are_ready(ticker.modelGreeks)
-                    for ticker in tickers.values()
-                ):
-                    break
 
         for item in valid_items:
             ticker = tickers[item["key"]]
