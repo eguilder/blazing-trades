@@ -319,24 +319,8 @@ def greeks():
                 and c.get("delta") is not None
                 and c.get("theta") is not None
             ):
-
-                results.append(
-                    build_result(
-                        row_id,
-                        key,
-                        underlying,
-                        c["multiplier"],
-                        c["delta"],
-                        c["theta"],
-                        c["gamma"],
-                        c["vega"],
-                        c.get("underlyingPrice"),
-                        c.get("inTheMoney"),
-                        qty,
-                        c.get("premiumPrice")
-                    )
-                )
-
+                # Cached positions are emitted once in the final ordered
+                # response below. Do not append them here as well.
                 continue
 
         pending_by_key.setdefault(key, {

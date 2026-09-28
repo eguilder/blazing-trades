@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.5
+// @version      1.1.6
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -196,70 +196,6 @@
                 qty: position.qty
             }))
         );
-    }
-
-    const CACHE_KEY = 'tm-degiro-greeks-cache-v1';
-
-    function restoreCachedGreeks(signature, positions) {
-
-        try {
-
-            const stored =
-                JSON.parse(
-                    sessionStorage.getItem(CACHE_KEY)
-                );
-
-            if (!stored || stored.signature !== signature) {
-                return false;
-            }
-
-            const storedAt = new Date(stored.fetchedAt);
-
-            if (
-                !Number.isFinite(storedAt.getTime()) ||
-                Date.now() - storedAt.getTime() >= CACHE_TTL_MS
-            ) {
-                sessionStorage.removeItem(CACHE_KEY);
-                return false;
-            }
-
-            // Row ids belong to the current DOM, not to the previous page
-            // render. Keep the cached values but bind them to current rows.
-            cachedGreeks = stored.greeks.map((greek, idx) => ({
-                ...greek,
-                rowId: positions[idx].rowId
-            }));
-            cachedSignature = signature;
-            cacheLocked = true;
-            fetchedAt = storedAt;
-            scheduleCacheExpiry();
-            return true;
-
-        } catch (e) {
-
-            sessionStorage.removeItem(CACHE_KEY);
-            return false;
-        }
-    }
-
-    function persistCachedGreeks(signature, greeks) {
-
-        try {
-
-            sessionStorage.setItem(
-                CACHE_KEY,
-                JSON.stringify({
-                    signature,
-                    greeks,
-                    fetchedAt: fetchedAt.toISOString()
-                })
-            );
-
-        } catch (e) {
-
-            // Caching is an optimization; private browsing/storage limits
-            // must not prevent the overlay from working.
-        }
     }
 
     function scheduleCacheExpiry() {
@@ -927,10 +863,6 @@
         fetchedAt = new Date();
 
         if (completeGreeks) {
-            persistCachedGreeks(
-                signature,
-                greeks
-            );
             scheduleCacheExpiry();
         }
 
@@ -983,19 +915,6 @@
         }
 
         const signature = getPositionsSignature(positions);
-
-        if (
-            !cachedGreeks &&
-            restoreCachedGreeks(
-                signature,
-                positions
-            )
-        ) {
-            scheduleRenderGreeks(
-                cachedGreeks
-            );
-            return;
-        }
 
         if (
             cachedGreeks &&
