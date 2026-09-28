@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.4
+// @version      1.1.5
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -35,6 +35,7 @@
     window[INSTANCE_KEY] = true;
 
     const API_URL = 'http://127.0.0.1:5000/greeks';
+    const CACHE_TTL_MS = 5 * 60 * 1000;
 
     const itmStyle = document.createElement('style');
     itmStyle.textContent = `
@@ -212,6 +213,16 @@
                 return false;
             }
 
+            const storedAt = new Date(stored.fetchedAt);
+
+            if (
+                !Number.isFinite(storedAt.getTime()) ||
+                Date.now() - storedAt.getTime() >= CACHE_TTL_MS
+            ) {
+                sessionStorage.removeItem(CACHE_KEY);
+                return false;
+            }
+
             // Row ids belong to the current DOM, not to the previous page
             // render. Keep the cached values but bind them to current rows.
             cachedGreeks = stored.greeks.map((greek, idx) => ({
@@ -220,7 +231,8 @@
             }));
             cachedSignature = signature;
             cacheLocked = true;
-            fetchedAt = new Date(stored.fetchedAt);
+            fetchedAt = storedAt;
+            scheduleCacheExpiry();
             return true;
 
         } catch (e) {
@@ -248,6 +260,20 @@
             // Caching is an optimization; private browsing/storage limits
             // must not prevent the overlay from working.
         }
+    }
+
+    function scheduleCacheExpiry() {
+
+        clearTimeout(cacheExpiryTimer);
+
+        const age = fetchedAt
+            ? Date.now() - fetchedAt.getTime()
+            : CACHE_TTL_MS;
+
+        cacheExpiryTimer = setTimeout(
+            refresh,
+            Math.max(0, CACHE_TTL_MS - age)
+        );
     }
 
     function getOptionsTable() {
@@ -682,6 +708,7 @@
     }
 
     let refreshTimer;
+    let cacheExpiryTimer;
     let renderFrame;
     let isLoading = false;
     let isRendering = false;
@@ -904,6 +931,7 @@
                 signature,
                 greeks
             );
+            scheduleCacheExpiry();
         }
 
         scheduleRenderGreeks(
@@ -937,12 +965,21 @@
         }
 
         // Once a complete response exists, DOM churn from the DeGiro SPA
-        // must never trigger another API request for this page.
+        // must not trigger another request until the cache has expired.
         if (cacheLocked && cachedGreeks) {
-            scheduleRenderGreeks(
-                cachedGreeks
-            );
-            return;
+            if (
+                fetchedAt &&
+                Date.now() - fetchedAt.getTime() < CACHE_TTL_MS
+            ) {
+                scheduleRenderGreeks(
+                    cachedGreeks
+                );
+                return;
+            }
+
+            cacheLocked = false;
+            cachedGreeks = null;
+            cachedSignature = null;
         }
 
         const signature = getPositionsSignature(positions);
