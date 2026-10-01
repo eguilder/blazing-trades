@@ -173,9 +173,12 @@ Add further underlyings by extending the `UNDERLYINGS` dict in `greeks_service.p
 **File:** `ibkr_option_greeks.py`
 
 Connects directly to IBKR, reads current option positions, requests IBKR model
-Greeks for each option contract, and prints total delta/theta by underlying plus
-a delta dollar exposure column and a detailed per-contract breakdown. `Delta $`
-is calculated as total delta exposure multiplied by the underlying share price.
+Greeks for each option contract, and prints the current underlying price, total
+delta/theta by underlying, total premium for out-of-the-money option positions,
+and a delta dollar exposure column plus a detailed per-contract breakdown.
+`Delta $` is calculated as total delta exposure multiplied by the underlying
+share price. `OTM Premium` is signed by position quantity and scaled by the
+option multiplier; the output also breaks it down by expiration month.
 
 ## Usage
 

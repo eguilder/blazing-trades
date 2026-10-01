@@ -150,19 +150,56 @@ def market_data_contract(contract, option_exchange):
 
 
 def request_model_greeks(ib, contract, timeout=6.0, option_exchange='SMART'):
+    greeks, _ = request_option_data(
+        ib,
+        contract,
+        timeout=timeout,
+        option_exchange=option_exchange
+    )
+    return greeks
+
+
+def option_premium(ticker, greeks=None):
+    candidates = []
+    try:
+        candidates.append(ticker.marketPrice())
+    except Exception:
+        pass
+    candidates.extend([
+        (
+            (getattr(ticker, 'bid', None) + getattr(ticker, 'ask', None)) / 2
+            if valid_number(getattr(ticker, 'bid', None))
+            and valid_number(getattr(ticker, 'ask', None))
+            and getattr(ticker, 'bid') >= 0
+            and getattr(ticker, 'ask') >= 0
+            else None
+        ),
+        getattr(ticker, 'last', None),
+        getattr(ticker, 'close', None),
+        getattr(greeks, 'optPrice', None) if greeks is not None else None,
+    ])
+    for premium in candidates:
+        if valid_number(premium) and premium >= 0:
+            return premium
+    return None
+
+
+def request_option_data(ib, contract, timeout=6.0, option_exchange='SMART'):
     market_contract = market_data_contract(contract, option_exchange)
     ticker = ib.reqMktData(market_contract, '', False, False)
+    greeks = None
     try:
         elapsed = 0.0
         poll_interval = 0.25
         while elapsed < timeout:
             if ticker.modelGreeks is not None:
-                return ticker.modelGreeks
+                greeks = ticker.modelGreeks
+                break
             ib.sleep(poll_interval)
             elapsed += poll_interval
     finally:
         ib.cancelMktData(market_contract)
-    return None
+    return greeks, option_premium(ticker, greeks)
 
 
 def request_share_price(ib, symbol, currency='USD', timeout=6.0, stock_exchange='SMART'):
@@ -202,6 +239,17 @@ def contract_key(contract):
     )
 
 
+def expiration_month(contract):
+    expiry = str(
+        getattr(contract, 'lastTradeDateOrContractMonth', '') or ''
+    )
+    if len(expiry) >= 6 and expiry[:6].isdigit():
+        return f'{expiry[:4]}-{expiry[4:6]}'
+    if len(expiry) >= 7 and expiry[4] == '-':
+        return expiry[:7]
+    return expiry or 'Unknown'
+
+
 def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
     memo = {}
     share_prices = {}
@@ -210,6 +258,8 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
         'total_theta': 0.0,
         'delta_dollars': None,
         'share_price': None,
+        'total_otm_premium': 0.0,
+        'otm_premium_by_expiry': defaultdict(float),
         'currency': '',
         'positions': 0,
         'contracts': []
@@ -225,13 +275,13 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
         totals[underlying]['currency'] = currency
 
         if key not in memo:
-            greeks = request_model_greeks(
+            greeks, premium = request_option_data(
                 ib,
                 contract,
                 timeout=wait,
                 option_exchange=option_exchange
             )
-            memo[key] = greeks
+            memo[key] = (greeks, premium)
 
         if underlying not in share_prices:
             share_prices[underlying] = request_share_price(
@@ -243,13 +293,30 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
             )
         totals[underlying]['share_price'] = share_prices[underlying]
 
-        greeks = memo[key]
+        greeks, premium = memo[key]
+        share_price = totals[underlying]['share_price']
+        right = getattr(contract, 'right', '').upper()
+        strike = getattr(contract, 'strike', None)
+        is_otm = (
+            share_price is not None
+            and valid_number(strike)
+            and ((right == 'C' and share_price < strike)
+                 or (right == 'P' and share_price > strike))
+        )
+        if is_otm and premium is not None:
+            position_premium = premium * quantity * multiplier
+            totals[underlying]['total_otm_premium'] += position_premium
+            totals[underlying]['otm_premium_by_expiry'][
+                expiration_month(contract)
+            ] += position_premium
+
         if greeks is None:
             totals[underlying]['contracts'].append(
                 {
                     'contract': contract.localSymbol or repr(contract),
                     'quantity': quantity,
                     'multiplier': multiplier,
+                    'premium': premium,
                     'delta': None,
                     'theta': None,
                 }
@@ -269,6 +336,7 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
                 'contract': contract.localSymbol or repr(contract),
                 'quantity': quantity,
                 'multiplier': multiplier,
+                'premium': premium,
                 'delta': delta,
                 'theta': theta,
                 'position_delta': position_delta,
@@ -289,18 +357,33 @@ def print_summary(totals):
         print('No option positions were found in the connected IBKR account.')
         return
 
-    print('Ticker | Total Delta |        Delta $ | Total Theta | Option Contracts')
-    print('------ | ----------- | -------------- | ----------- | ----------------')
+    print(
+        f'{"Ticker":<6} | {"Price":>10} | {"Total Delta":>11} | '
+        f'{"Delta $":>14} | {"Total Theta":>11} | '
+        f'{"OTM Premium":>11} | {"Option Contracts":>16}'
+    )
+    print('------ | ---------- | ----------- | -------------- | ----------- | ----------- | ----------------')
     for ticker, data in sorted(totals.items()):
+        share_price = data['share_price']
+        share_price_text = f'{share_price:,.2f}' if share_price is not None else 'n/a'
         delta = data['total_delta']
         delta_dollars = data['delta_dollars']
         delta_dollars_text = f'{delta_dollars:,.2f}' if delta_dollars is not None else 'n/a'
         theta = data['total_theta']
+        otm_premium = data['total_otm_premium']
         count = data['positions']
         print(
-            f'{ticker:6} | {delta:11.2f} | {delta_dollars_text:>14} | '
-            f'{theta:11.2f} | {count:16d}'
+            f'{ticker:6} | {share_price_text:>10} | {delta:11.2f} | '
+            f'{delta_dollars_text:>14} | {theta:11.2f} | '
+            f'{otm_premium:11,.2f} | {count:16d}'
         )
+
+    print('\nOTM Premium by expiration month:')
+    print('Ticker | Expiry  | OTM Premium')
+    print('------ | -------- | -----------')
+    for ticker, data in sorted(totals.items()):
+        for expiry, premium in sorted(data['otm_premium_by_expiry'].items()):
+            print(f'{ticker:6} | {expiry:8} | {premium:11,.2f}')
 
     print('\nDetailed position breakdown:')
     for ticker, data in sorted(totals.items()):
@@ -309,6 +392,7 @@ def print_summary(totals):
             print(
                 f"  {item['contract']:20} qty={item['quantity']:>5} "
                 f"mult={item['multiplier']:>3} "
+                f"premium={item['premium']} "
                 f"delta={item['delta']} "
                 f"theta={item['theta']} "
                 f"posDelta={item.get('position_delta')} "
