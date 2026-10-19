@@ -77,13 +77,38 @@ def calculate_max_pain(rows: Iterable[OptionRow]) -> dict[str, object]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch an IBKR option chain and calculate max pain."
+        description=(
+            "Fetch one IBKR option expiration and calculate open-interest max pain.\n"
+            "TWS or IB Gateway must be running with API access enabled. "
+            "The default market-data type is delayed (3)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  US-listed option on SMART (delayed data; defaults are shown explicitly):
+    py -3 .\\max_pain_ibkr.py AAPL 2026-09-18 --exchange SMART --currency USD --market-data-type 3
+
+  US-listed option with live market data:
+    py -3 .\\max_pain_ibkr.py MPWR 2026-09-18 --market-data-type 1
+
+  European-listed ASML option on FTA (EUR; trading class ASL is automatic):
+    py -3 .\\max_pain_ibkr.py ASML 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
+
+  European-listed ADYEN option on FTA (EUR; trading class ADY is automatic):
+    py -3 .\\max_pain_ibkr.py ADYEN 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
+
+Use --trading-class to override the automatic trading class when required.
+Use --output and --chain-output to save the strike scores and fetched quotes.
+""",
     )
-    parser.add_argument("symbol", help="Underlying ticker, for example AAPL")
+    parser.add_argument("symbol", help="Underlying ticker, for example AAPL or ASML")
     parser.add_argument("expiration", help="Expiration in YYYYMMDD or YYYY-MM-DD format")
-    parser.add_argument("--host", default=os.getenv("IB_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("IB_PORT", "7496")))
-    parser.add_argument("--client-id", type=int, default=int(os.getenv("IB_MAX_PAIN_CLIENT_ID", "779")))
+    parser.add_argument("--host", default=os.getenv("IB_HOST", "127.0.0.1"),
+                        help="TWS/Gateway host (default: %(default)s)")
+    parser.add_argument("--port", type=int, default=int(os.getenv("IB_PORT", "7496")),
+                        help="TWS/Gateway API port (default: %(default)s)")
+    parser.add_argument("--client-id", type=int, default=int(os.getenv("IB_MAX_PAIN_CLIENT_ID", "779")),
+                        help="IBKR API client id (default: %(default)s)")
     parser.add_argument("--exchange", default=os.getenv("IB_OPTION_EXCHANGE", "SMART"),
                         help="IBKR exchange for the underlying and options (default: SMART)")
     parser.add_argument("--currency", default=os.getenv("IB_OPTION_CURRENCY", "USD"),
