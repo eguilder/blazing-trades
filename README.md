@@ -228,27 +228,27 @@ with `--option-exchange` if a specific venue is required.
 
 **File:** `max_pain_ibkr.py`
 
-Fetches one expiration from IBKR, calculates standard open-interest max pain, and prints the ten strikes with the lowest aggregate expiration payout, ordered by strike.
+Fetches one expiration from IBKR, calculates standard open-interest max pain, and prints either the ten strikes with the lowest aggregate expiration payout or every strike within one standard deviation of the mean strike. Select the report with the required `--payout-report` option: `top10` or `within-1sd`.
 
 Also prints the underlying price and the total expiration payout at each of the closest available strikes strictly below and above that price. If spot equals a strike, it uses the neighboring strikes on either side. Each total uses intrinsic value times open interest and the contract multiplier across the fetched chain. The underlying price follows the selected market-data type, so it may be delayed or frozen. If neither a stock quote nor an option model's underlying price is available, the script reports the nearest-strike totals as unavailable. If there is no fetched strike on one side of spot, that side is reported as unavailable.
 
 The script requests actual contracts for the selected expiration with `reqContractDetails`, which avoids invalid strike/expiration combinations returned by a Cartesian option-chain definition. It uses streaming market-data requests so delayed open-interest ticks have time to arrive, and reports progress while connecting, loading contracts, waiting for ticks, and calculating payouts. This has been verified with MPWR.
 
 ```powershell
-py -3 .\max_pain_ibkr.py AAPL 2026-09-18 --market-data-type 3 --output aapl_max_pain.csv --chain-output aapl_chain.csv
+py -3 .\max_pain_ibkr.py AAPL 2026-09-18 --market-data-type 3 --payout-report top10 --output aapl_max_pain.csv --chain-output aapl_chain.csv
 ```
 
 For example:
 
 ```powershell
-py -3 .\max_pain_ibkr.py MPWR 2026-09-18 --market-data-type 3
+py -3 .\max_pain_ibkr.py MPWR 2026-09-18 --market-data-type 3 --payout-report top10
 ```
 
 European-listed options use their IBKR exchange and currency. For ASML and ADYEN on FTA, use:
 
 ```powershell
-py -3 .\max_pain_ibkr.py ASML 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
-py -3 .\max_pain_ibkr.py ADYEN 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
+py -3 .\max_pain_ibkr.py ASML 2026-09-18 --exchange FTA --currency EUR --market-data-type 3 --payout-report top10
+py -3 .\max_pain_ibkr.py ADYEN 2026-09-18 --exchange FTA --currency EUR --market-data-type 3 --payout-report within-1sd
 ```
 
 The script automatically uses IBKR trading classes `ASL` for ASML and `ADY` for ADYEN. You can override this with `--trading-class` when needed. The contract multiplier is read from IBKR, so instruments such as ADYEN (typically multiplier 10) and ASML (typically multiplier 100) are handled without hard-coded values. The max-pain calculation uses expiration intrinsic value and open interest; European exercise style does not change that expiration calculation.

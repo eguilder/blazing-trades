@@ -41,7 +41,7 @@ def valid_number(value: object) -> bool:
 
 
 def calculate_max_pain(rows: Iterable[OptionRow]) -> dict[str, object]:
-    """Calculate OI payout max pain and the ten lowest-payout strikes.
+    """Calculate OI payout max pain and selectable payout-report data.
 
     Candidate settlement prices are the strikes present in the chain.  A call
     pays max(S-K, 0), while a put pays max(K-S, 0), per share.
@@ -67,10 +67,22 @@ def calculate_max_pain(rows: Iterable[OptionRow]) -> dict[str, object]:
     oi_level = min(payout_by_strike, key=lambda strike: (payout_by_strike[strike], strike))
     top_ten = sorted(payout_by_strike.items(), key=lambda item: (item[1], item[0]))[:10]
     top_ten.sort(key=lambda item: item[0])
+    strike_mean = sum(strikes) / len(strikes)
+    strike_stddev = math.sqrt(
+        sum((strike - strike_mean) ** 2 for strike in strikes) / len(strikes)
+    )
+    one_sd_payouts = [
+        (strike, payout_by_strike[strike])
+        for strike in strikes
+        if abs(strike - strike_mean) <= strike_stddev
+    ]
     return {
         "max_pain_strike": oi_level,
         "max_pain_payout": payout_by_strike[oi_level],
         "top_ten": top_ten,
+        "one_sd_payouts": one_sd_payouts,
+        "strike_mean": strike_mean,
+        "strike_stddev": strike_stddev,
         "payout_by_strike": payout_by_strike,
     }
 
@@ -86,19 +98,22 @@ def parse_args() -> argparse.Namespace:
         epilog="""\
 Examples:
   US-listed option on SMART (delayed data; defaults are shown explicitly):
-    py -3 .\\max_pain_ibkr.py AAPL 2026-09-18 --exchange SMART --currency USD --market-data-type 3
+    py -3 .\\max_pain_ibkr.py AAPL 2026-09-18 --exchange SMART --currency USD --market-data-type 3 --payout-report top10
 
   US-listed option with live market data:
-    py -3 .\\max_pain_ibkr.py MPWR 2026-09-18 --market-data-type 1
+    py -3 .\\max_pain_ibkr.py MPWR 2026-09-18 --market-data-type 1 --payout-report within-1sd
 
   European-listed ASML option on FTA (EUR; trading class ASL is automatic):
-    py -3 .\\max_pain_ibkr.py ASML 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
+    py -3 .\\max_pain_ibkr.py ASML 2026-09-18 --exchange FTA --currency EUR --market-data-type 3 --payout-report top10
 
   European-listed ADYEN option on FTA (EUR; trading class ADY is automatic):
-    py -3 .\\max_pain_ibkr.py ADYEN 2026-09-18 --exchange FTA --currency EUR --market-data-type 3
+    py -3 .\\max_pain_ibkr.py ADYEN 2026-09-18 --exchange FTA --currency EUR --market-data-type 3 --payout-report within-1sd
 
 Use --trading-class to override the automatic trading class when required.
 Use --output and --chain-output to save the strike scores and fetched quotes.
+The --payout-report option is required: choose top10 for the ten lowest payouts,
+or within-1sd for every payout whose strike is within one standard deviation of
+the mean strike.
 """,
     )
     parser.add_argument("symbol", help="Underlying ticker, for example AAPL or ASML")
@@ -116,11 +131,23 @@ Use --output and --chain-output to save the strike scores and fetched quotes.
     parser.add_argument("--trading-class", help="IBKR option trading class, e.g. ASL for ASML")
     parser.add_argument("--market-data-type", type=int, choices=(1, 2, 3, 4), default=3,
                         help="1 live, 2 frozen, 3 delayed, 4 delayed-frozen (default: 3)")
+    parser.add_argument(
+        "--payout-report",
+        choices=("top10", "within-1sd"),
+        help=(
+            "Required report: top10 (ten lowest expiration payouts) or "
+            "within-1sd (all payouts within one strike standard deviation)"
+        ),
+    )
     parser.add_argument("--timeout", type=float, default=12.0,
                         help="Seconds to wait for option market-data ticks (default: 12)")
     parser.add_argument("--output", help="Optional CSV output path")
     parser.add_argument("--chain-output", help="Optional CSV path for the fetched option quotes")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.payout_report is None:
+        parser.print_help()
+        parser.error("the following argument is required: --payout-report")
+    return args
 
 
 def normalize_expiration(value: str) -> str:
@@ -301,9 +328,22 @@ def main() -> int:
                           f"(total expiration payout {payouts[strike]:,.0f} {args.currency})")
         else:
             print("Nearest-strike totals unavailable: no underlying price returned by IBKR.")
-        print("Top 10 lowest expiration payouts (ordered by strike):")
-        for rank, (strike, payout) in enumerate(result["top_ten"], start=1):
-            print(f"  {rank}. {strike:.2f} -> ${payout:,.0f}")
+        if args.payout_report == "top10":
+            print("Top 10 lowest expiration payouts (ordered by strike):")
+            for rank, (strike, payout) in enumerate(result["top_ten"], start=1):
+                print(f"  {rank}. {strike:.2f} -> ${payout:,.0f}")
+        else:
+            mean = result["strike_mean"]
+            stddev = result["strike_stddev"]
+            lower = mean - stddev
+            upper = mean + stddev
+            print(
+                "Expiration payouts for strikes within 1 standard deviation "
+                f"of the mean strike ({lower:.2f} to {upper:.2f}; "
+                f"mean {mean:.2f}, standard deviation {stddev:.2f}):"
+            )
+            for strike, payout in result["one_sd_payouts"]:
+                print(f"  {strike:.2f} -> {payout:,.0f} {args.currency}")
         if args.output:
             write_csv(args.output, result)
             print(f"Wrote strike scores to {args.output}")
