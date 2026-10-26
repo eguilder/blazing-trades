@@ -250,6 +250,23 @@ def expiration_month(contract):
     return expiry or 'Unknown'
 
 
+def extrinsic_premium(premium, share_price, strike, right):
+    """Return option premium excluding intrinsic value, per share."""
+    if premium is None or share_price is None or not valid_number(strike):
+        return None
+
+    right = (right or '').upper()
+    if right == 'C':
+        intrinsic = max(share_price - strike, 0.0)
+    elif right == 'P':
+        intrinsic = max(strike - share_price, 0.0)
+    else:
+        return None
+
+    # Quotes can occasionally be stale or rounded below intrinsic value.
+    return max(premium - intrinsic, 0.0)
+
+
 def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
     memo = {}
     share_prices = {}
@@ -297,14 +314,11 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
         share_price = totals[underlying]['share_price']
         right = getattr(contract, 'right', '').upper()
         strike = getattr(contract, 'strike', None)
-        is_otm = (
-            share_price is not None
-            and valid_number(strike)
-            and ((right == 'C' and share_price < strike)
-                 or (right == 'P' and share_price > strike))
+        time_premium = extrinsic_premium(
+            premium, share_price, strike, right
         )
-        if is_otm and premium is not None:
-            position_premium = premium * quantity * multiplier
+        if time_premium is not None:
+            position_premium = time_premium * quantity * multiplier
             totals[underlying]['total_otm_premium'] += position_premium
             totals[underlying]['otm_premium_by_expiry'][
                 expiration_month(contract)
