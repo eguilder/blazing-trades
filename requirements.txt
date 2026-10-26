@@ -1,3 +1,5 @@
 flask
 ib_insync
 tzdata
+pandas
+yfinance

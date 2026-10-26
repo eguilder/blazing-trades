@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 TICKERS = [
     "TSLA",
     "NVDA",
-    "QCOM",
+    "MPWR",
     "MU",
     "INTC",
     "AAPL",
