@@ -27,28 +27,34 @@ UNDERLYINGS = {
         "symbol": "ADYEN",
         "tradingClass": "ADY",
         "exchange": "FTA",
-        "multiplier": 10
+        "multiplier": 10,
+        # ADYEN's premium quote already includes the 10-share contract
+        # multiplier. Greeks still use the contract multiplier below.
+        "premiumMultiplier": 1
     },
 
     "ASL": {
         "symbol": "ASML",
         "tradingClass": "ASL",
         "exchange": "FTA",
-        "multiplier": 100
+        "multiplier": 100,
+        "premiumMultiplier": 100
     },
 
     "BES": {
         "symbol": "BESI",
         "tradingClass": "BESI",
         "exchange": "FTA",
-        "multiplier": 100
+        "multiplier": 100,
+        "premiumMultiplier": 100
     },
 
     "ING": {
         "symbol": "ING",
         "tradingClass": "ING",
         "exchange": "FTA",
-        "multiplier": 100
+        "multiplier": 100,
+        "premiumMultiplier": 100
     }
 }
 
@@ -127,6 +133,7 @@ def build_result(
     key,
     underlying,
     multiplier,
+    premium_multiplier,
     delta,
     theta,
     gamma,
@@ -156,7 +163,7 @@ def build_result(
             if theta is not None else None,
         "premiumPrice": premium_price,
         "positionPremium":
-            premium_price * qty * multiplier
+            premium_price * qty * premium_multiplier
             if premium_price is not None else None
     }
 
@@ -296,6 +303,7 @@ def greeks():
         trading_class = info["tradingClass"]
         exchange = info["exchange"]
         multiplier = info["multiplier"]
+        premium_multiplier = info["premiumMultiplier"]
 
         expiry = pos["expiry"]
         strike = float(pos["strike"])
@@ -330,6 +338,7 @@ def greeks():
             "tradingClass": trading_class,
             "exchange": exchange,
             "multiplier": multiplier,
+            "premiumMultiplier": premium_multiplier,
             "expiry": expiry,
             "strike": strike,
             "right": right,
@@ -404,6 +413,7 @@ def greeks():
                 cache[item["key"]] = {
                     "timestamp": time.time(),
                     "multiplier": item["multiplier"],
+                    "premiumMultiplier": item["premiumMultiplier"],
                     "delta": delta,
                     "theta": theta,
                     "gamma": gamma,
@@ -430,7 +440,9 @@ def greeks():
         if key in cache:
             c = cache[key]
             results.append(build_result(
-                row_id, key, underlying, c["multiplier"], c["delta"],
+                row_id, key, underlying, c["multiplier"],
+                c.get("premiumMultiplier", 1 if underlying == "ADY" else c["multiplier"]),
+                c["delta"],
                 c["theta"], c["gamma"], c["vega"],
                 c.get("underlyingPrice"), c.get("inTheMoney"), qty,
                 c.get("premiumPrice")

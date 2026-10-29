@@ -318,7 +318,9 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
             premium, share_price, strike, right
         )
         if time_premium is not None:
-            position_premium = time_premium * quantity * multiplier
+            # Premium is shown from the cash-flow perspective: short positions
+            # receive premium (+), while long positions pay premium (-).
+            position_premium = -time_premium * quantity * multiplier
             totals[underlying]['total_otm_premium'] += position_premium
             totals[underlying]['otm_premium_by_expiry'][
                 expiration_month(contract)
@@ -330,7 +332,8 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
                     'contract': contract.localSymbol or repr(contract),
                     'quantity': quantity,
                     'multiplier': multiplier,
-                    'premium': premium,
+                    'premium': -premium if premium is not None and quantity > 0
+                    else (premium if premium is not None else None),
                     'delta': None,
                     'theta': None,
                 }
@@ -350,7 +353,8 @@ def summarize_positions(positions, ib, wait, option_exchange, stock_exchange):
                 'contract': contract.localSymbol or repr(contract),
                 'quantity': quantity,
                 'multiplier': multiplier,
-                'premium': premium,
+                'premium': -premium if premium is not None and quantity > 0
+                else (premium if premium is not None else None),
                 'delta': delta,
                 'theta': theta,
                 'position_delta': position_delta,

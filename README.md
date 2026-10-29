@@ -177,10 +177,11 @@ Greeks for each option contract, and prints the current underlying price, total
 delta/theta by underlying, total extrinsic premium for all option positions,
 and a delta dollar exposure column plus a detailed per-contract breakdown.
 `Delta $` is calculated as total delta exposure multiplied by the underlying
-share price. `OTM Premium` is signed by position quantity and scaled by the
-option multiplier. It includes the full premium for OTM options and, for ITM
-options, subtracts intrinsic value first. The output also breaks it down by
-expiration month.
+share price. Premium is shown from the cash-flow perspective: short positions
+are positive (premium received) and long positions are negative (premium paid).
+`OTM Premium` includes the full premium for OTM options and, for ITM options,
+subtracts intrinsic value first; it is scaled by the option multiplier and
+broken down by expiration month.
 
 ## Usage
 
