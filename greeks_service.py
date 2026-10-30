@@ -28,9 +28,9 @@ UNDERLYINGS = {
         "tradingClass": "ADY",
         "exchange": "FTA",
         "multiplier": 10,
-        # ADYEN's premium quote already includes the 10-share contract
-        # multiplier. Greeks still use the contract multiplier below.
-        "premiumMultiplier": 1
+        # IBKR option prices are quoted per underlying share. The contract
+        # multiplier therefore applies to both Greeks and premium values.
+        "premiumMultiplier": 10
     },
 
     "ASL": {
