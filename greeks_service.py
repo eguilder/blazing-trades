@@ -28,8 +28,9 @@ UNDERLYINGS = {
         "tradingClass": "ADY",
         "exchange": "FTA",
         "multiplier": 10,
-        # IBKR option prices are quoted per underlying share. The contract
-        # multiplier therefore applies to both Greeks and premium values.
+        # Live IBKR/DeGiro reconciliation shows ADY quotes are per share:
+        # 6.675 x 10 contracts x 10-share multiplier = 667.50. Both Greeks
+        # and premium therefore use the ADY contract multiplier.
         "premiumMultiplier": 10
     },
 
@@ -141,7 +142,8 @@ def build_result(
     underlying_price,
     in_the_money,
     qty,
-    premium_price
+    premium_price,
+    premium_trace=None
 ):
 
     return {
@@ -149,6 +151,7 @@ def build_result(
         "key": key,
         "underlying": underlying,
         "multiplier": multiplier,
+        "premiumMultiplier": premium_multiplier,
         "delta": delta,
         "theta": theta,
         "gamma": gamma,
@@ -162,13 +165,18 @@ def build_result(
             theta * qty * multiplier
             if theta is not None else None,
         "premiumPrice": premium_price,
+        "premiumTrace": premium_trace,
+        # Report premium from the cash-flow perspective. DeGiro/IBKR
+        # quantities are positive for long positions and negative for short
+        # positions, so the cash-flow sign is the inverse of qty: long
+        # premium paid is negative and short premium received is positive.
         "positionPremium":
-            premium_price * qty * premium_multiplier
+            -premium_price * qty * premium_multiplier
             if premium_price is not None else None
     }
 
 
-def current_premium_price(ticker, underlying_price, strike, right):
+def current_premium_details(ticker, underlying_price, strike, right):
 
     try:
         market_price = ticker.marketPrice()
@@ -208,7 +216,18 @@ def current_premium_price(ticker, underlying_price, strike, right):
         isinstance(market_price, (int, float))
         and math.isfinite(market_price)
     ):
-        return None
+        return {
+            "marketPrice": None,
+            "underlyingPrice": underlying_price,
+            "strike": strike,
+            "right": right,
+            "intrinsic": None,
+            "extrinsic": None,
+            "quoteUnit": "unknown"
+        }
+
+    intrinsic_value = None
+    extrinsic_value = market_price
 
     if (
         isinstance(underlying_price, (int, float))
@@ -220,9 +239,24 @@ def current_premium_price(ticker, underlying_price, strike, right):
             else strike - underlying_price,
             0
         )
-        return max(market_price - intrinsic_value, 0)
+        extrinsic_value = max(market_price - intrinsic_value, 0)
 
-    return market_price
+    return {
+        "marketPrice": market_price,
+        "underlyingPrice": underlying_price,
+        "strike": strike,
+        "right": right,
+        "intrinsic": intrinsic_value,
+        "extrinsic": extrinsic_value,
+        "quoteUnit": "IBKR ticker.marketPrice()"
+    }
+
+
+def current_premium_price(ticker, underlying_price, strike, right):
+    """Return only the extrinsic premium for callers that need a scalar."""
+    return current_premium_details(
+        ticker, underlying_price, strike, right
+    )["extrinsic"]
 
 
 def greeks_are_ready(greeks):
@@ -394,12 +428,13 @@ def greeks():
             else:
                 delta = theta = gamma = vega = underlying_price = None
 
-            premium_price = current_premium_price(
+            premium_trace = current_premium_details(
                 ticker,
                 underlying_price,
                 item["strike"],
                 item["right"]
             )
+            premium_price = premium_trace["extrinsic"]
 
             in_the_money = None
             if underlying_price is not None:
@@ -420,7 +455,8 @@ def greeks():
                     "vega": vega,
                     "underlyingPrice": underlying_price,
                     "inTheMoney": in_the_money,
-                    "premiumPrice": premium_price
+                    "premiumPrice": premium_price,
+                    "premiumTrace": premium_trace
                 }
             ib.cancelMktData(item["contract"])
 
@@ -445,7 +481,7 @@ def greeks():
                 c["delta"],
                 c["theta"], c["gamma"], c["vega"],
                 c.get("underlyingPrice"), c.get("inTheMoney"), qty,
-                c.get("premiumPrice")
+                c.get("premiumPrice"), c.get("premiumTrace")
             ))
         elif key in pending_by_key and pending_by_key[key].get("error"):
             results.append({"rowId": row_id, "key": key, "error": pending_by_key[key]["error"]})
