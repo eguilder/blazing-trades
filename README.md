@@ -12,11 +12,37 @@ A collection of options trading tools covering OPEX analysis and live Greeks ove
 ├── opex_spot.html                   # OPEX dashboard
 ├── greeks_service.py                # Greeks API server (Flask + IBKR)
 ├── ibkr_option_greeks.py            # IBKR option position Greeks summary
+├── ibkr_historical.py                # IBKR historical OHLCV downloader
 ├── DeGiro-Greeks-Overlay-1.0.user.js     # Tampermonkey script — live Greeks
 ├── DeGiro-Options-Month-Buttons.user.js  # Tampermonkey script — expiry filter
 ├── pl_report.py                     # Realized P&L report from broker CSV
 └── README.md
 ```
+
+---
+
+# IBKR Historical OHLCV
+
+**File:** `ibkr_historical.py`
+
+Downloads historical stock candles from IBKR and writes them to CSV. The
+positional arguments are the ticker, history lookback, and candle timeframe.
+Use `y` for years in the history argument, and `m`, `h`, or `d` suffixes for
+minutes, hours, or days in the timeframe argument. Supported values
+include `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `8h`, and `1d`.
+
+TWS or IB Gateway must be running with API access enabled. Delayed data is the
+default, and regular trading hours are used unless `--include-extended-hours`
+is supplied.
+
+```powershell
+py -3 .\ibkr_historical.py AAPL 2y 5m --output .\data\aapl_5m.csv
+py -3 .\ibkr_historical.py MSFT 1y 1h --market-data-type 1 --include-extended-hours
+```
+
+The script chunks requests to fit IBKR historical-data limits and deduplicates
+overlapping boundary candles. Large multi-year minute-bar downloads can take a
+long time because IBKR applies historical-request pacing limits.
 
 ---
 
