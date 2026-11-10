@@ -24,6 +24,11 @@ DEFAULT_CLIENT_ID_ATTEMPTS = int(os.getenv('IB_CLIENT_ID_ATTEMPTS', '10'))
 DEFAULT_CONNECT_TIMEOUT = float(os.getenv('IB_CONNECT_TIMEOUT', '4'))
 DEFAULT_OPTION_EXCHANGE = os.getenv('IB_OPTION_EXCHANGE', 'SMART')
 DEFAULT_STOCK_EXCHANGE = os.getenv('IB_STOCK_EXCHANGE', 'SMART')
+DEFAULT_MARKET_DATA_TYPE = int(os.getenv('IB_MARKET_DATA_TYPE', '1'))
+# MPWR (and some other underlyings) does not populate the basic ticker fields
+# for an API request with an empty generic-tick list.  221 supplies markPrice
+# and 233 supplies the real-time/last-price stream.
+DEFAULT_STOCK_GENERIC_TICKS = os.getenv('IB_STOCK_GENERIC_TICKS', '221,233')
 
 
 def parse_args():
@@ -80,6 +85,23 @@ def valid_number(value):
     )
 
 
+def ticker_price_candidates(ticker):
+    """Return usable live, delayed, or mark-price fields from a ticker."""
+    candidates = []
+    for name in (
+        'marketPrice', 'last', 'markPrice', 'close', 'bid', 'ask',
+        'delayedLast', 'delayedClose', 'delayedBid', 'delayedAsk'
+    ):
+        value = getattr(ticker, name, None)
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                continue
+        candidates.append(value)
+    return candidates
+
+
 def connect_ib(host, port, client_id, client_id_attempts=10, connect_timeout=4):
     attempted = set()
     base_id = client_id
@@ -101,7 +123,11 @@ def connect_ib(host, port, client_id, client_id_attempts=10, connect_timeout=4):
         ib.errorEvent += record_ib_error
         try:
             ib.connect(host, port, clientId=attempt_id, timeout=connect_timeout)
-            ib.reqMarketDataType(3)
+            # Type 3 explicitly requests delayed data.  If delayed data is
+            # unavailable for an instrument, IB returns model Greeks but no
+            # quote fields.  Prefer live data and allow callers to override it
+            # with IB_MARKET_DATA_TYPE=2/3/4 when needed.
+            ib.reqMarketDataType(DEFAULT_MARKET_DATA_TYPE)
             print(f'Connected to IBKR with client id {attempt_id}.')
             return ib
         except Exception as exc:
@@ -160,11 +186,7 @@ def request_model_greeks(ib, contract, timeout=6.0, option_exchange='SMART'):
 
 
 def option_premium(ticker, greeks=None):
-    candidates = []
-    try:
-        candidates.append(ticker.marketPrice())
-    except Exception:
-        pass
+    candidates = ticker_price_candidates(ticker)
     candidates.extend([
         (
             (getattr(ticker, 'bid', None) + getattr(ticker, 'ask', None)) / 2
@@ -192,7 +214,12 @@ def request_option_data(ib, contract, timeout=6.0, option_exchange='SMART'):
         elapsed = 0.0
         poll_interval = 0.25
         while elapsed < timeout:
-            if ticker.modelGreeks is not None:
+            # Model Greeks and quote ticks can arrive independently.  Keep the
+            # subscription alive until both are available, or until timeout.
+            if (
+                ticker.modelGreeks is not None
+                and option_premium(ticker, ticker.modelGreeks) is not None
+            ):
                 greeks = ticker.modelGreeks
                 break
             ib.sleep(poll_interval)
@@ -206,19 +233,17 @@ def request_share_price(ib, symbol, currency='USD', timeout=6.0, stock_exchange=
     stock = Stock(symbol, stock_exchange, currency)
     qualified = ib.qualifyContracts(stock)
     market_contract = qualified[0] if qualified else stock
-    ticker = ib.reqMktData(market_contract, '', False, False)
+    ticker = ib.reqMktData(
+        market_contract,
+        DEFAULT_STOCK_GENERIC_TICKS,
+        False,
+        False
+    )
     try:
         elapsed = 0.0
         poll_interval = 0.25
         while elapsed < timeout:
-            candidates = [
-                ticker.marketPrice(),
-                getattr(ticker, 'last', None),
-                getattr(ticker, 'close', None),
-                getattr(ticker, 'bid', None),
-                getattr(ticker, 'ask', None),
-            ]
-            for price in candidates:
+            for price in ticker_price_candidates(ticker):
                 if valid_number(price) and price > 0:
                     return price
             ib.sleep(poll_interval)
