@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.7
+// @version      1.1.8
 // @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -214,19 +214,24 @@
             }
 
             const formatStrikes = values => values.length ? values.join(', ') : '-';
-            const legMarkers = [...legsByStrike].map(([strike, size]) => {
-                const position = high > low
-                    ? Math.max(0, Math.min(100, ((strike - low) / (high - low)) * 100))
-                    : 50;
-                const color = size < 0 ? '#f87171' : '#4ade80';
-                return `<span style="position:absolute; left:${position}%; top:-3px; width:3px; height:14px; background:${color}; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"></span>`;
-            }).join('');
+            const strikePosition = strike => high > low
+                ? Math.max(0, Math.min(100, ((strike - low) / (high - low)) * 100))
+                : 50;
+            let goldStart = 20;
+            let goldEnd = 80;
+            if (shortStrikes.length >= 2) {
+                goldStart = strikePosition(shortStrikes[0]);
+                goldEnd = strikePosition(shortStrikes[shortStrikes.length - 1]);
+            } else if (shortStrikes.length === 1) {
+                const shortPosition = strikePosition(shortStrikes[0]);
+                goldStart = Math.max(0, shortPosition - 2);
+                goldEnd = Math.min(100, shortPosition + 2);
+            }
 
             bar.style.display = 'block';
             bar.title = `${ticker} | long: ${formatStrikes(longStrikes)} | short: ${formatStrikes(shortStrikes)}`
                 + `${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)} (${spotRelation})`}`;
-            bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,#f87171 0 20%,#fbbf24 20% 80%,#60a5fa 80% 100%);">`
-                + legMarkers
+            bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,#f87171 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#60a5fa ${goldEnd}% 100%);">`
                 + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${spot.toFixed(2)}</span></span>`)
                 + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
         });
