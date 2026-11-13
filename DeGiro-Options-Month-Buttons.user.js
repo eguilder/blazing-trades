@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.2
+// @version      1.1.3
 // @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -9,6 +9,8 @@
 // @homepageURL  https://github.com/eguilder/blazing-trades
 // @supportURL   https://github.com/eguilder/blazing-trades/issues
 // @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      query1.finance.yahoo.com
 // ==/UserScript==
 
 (function () {
@@ -38,6 +40,15 @@
     let currentTickerFilter = 'ALL';
     let currentPositionFilter = 'ALL';
     let marketData = window.__tmOptionMarketData || {};
+    let spotRequestActive = false;
+    let lastSpotRequestAt = 0;
+
+    const YAHOO_SYMBOLS = {
+        ADY: 'ADYEN.AS',
+        ASL: 'ASML.AS',
+        BES: 'BESI.AS',
+        ING: 'INGA.AS'
+    };
 
         function extractMonth(text) {
         const m = text.match(/\d{1,2}(JAN|FEB|MRT|APR|MEI|JUN|JUL|AUG|SEP|OKT|NOV|DEC)\d{2}/i);
@@ -74,6 +85,54 @@
             if (Number.isFinite(value)) return value;
         }
         return null;
+    }
+
+    function refreshSpotData(tickers) {
+        if (typeof GM_xmlhttpRequest !== 'function' || spotRequestActive
+            || Date.now() - lastSpotRequestAt < 120000) {
+            return;
+        }
+
+        const requests = tickers
+            .filter(ticker => YAHOO_SYMBOLS[ticker])
+            .filter(ticker => !Number.isFinite(Number(marketData[ticker]?.spot)))
+            .map(ticker => ({ ticker, symbol: YAHOO_SYMBOLS[ticker] }));
+
+        if (!requests.length) return;
+        spotRequestActive = true;
+        lastSpotRequestAt = Date.now();
+        let remaining = requests.length;
+
+        requests.forEach(({ ticker, symbol }) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1d&interval=1m`,
+                onload: response => {
+                    try {
+                        const result = JSON.parse(response.responseText).chart.result?.[0];
+                        const meta = result?.meta;
+                        const spot = Number(meta?.regularMarketPrice ?? meta?.previousClose);
+                        const previousClose = Number(meta?.previousClose);
+                        if (Number.isFinite(spot)) {
+                            marketData[ticker] = {
+                                ...(marketData[ticker] || {}),
+                                spot,
+                                change: Number.isFinite(previousClose) ? spot - previousClose : null
+                            };
+                            updateTickerSpreads();
+                        }
+                    } catch (error) {
+                        console.warn(`Unable to read spot price for ${ticker}`, error);
+                    }
+                    remaining -= 1;
+                    if (!remaining) spotRequestActive = false;
+                },
+                onerror: () => {
+                    remaining -= 1;
+                    if (!remaining) spotRequestActive = false;
+                }
+            });
+        });
     }
 
         function getOptionsSection() {
@@ -256,6 +315,8 @@
         const desiredKey =
             desiredMonths.join(',') + '|' + desiredTickers.join(',') + '|'
             + desiredPositions.join(',');
+
+        refreshSpotData(tickers);
 
         if (toolbar.dataset.filterKey === desiredKey) {
             applyFilters();
