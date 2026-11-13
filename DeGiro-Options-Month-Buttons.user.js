@@ -176,8 +176,10 @@
             const high = strikes[strikes.length - 1];
             const sharedSpot = marketData[ticker] && Number(marketData[ticker].spot);
             const spot = Number.isFinite(sharedSpot) ? sharedSpot : pageSpot(ticker);
-            const spotPosition = Number.isFinite(spot) && high > low
-                ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
+            const spotPosition = Number.isFinite(spot)
+                ? high > low
+                    ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
+                    : 50
                 : null;
 
             const renderKey = [
@@ -195,8 +197,8 @@
 
             bar.style.display = 'block';
             bar.title = `${ticker}: ${low} – ${high}${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)}`}`;
-            bar.innerHTML = `<div style="position:relative; height:8px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,#f87171 0 20%,#fbbf24 20% 80%,#60a5fa 80% 100%);">`
-                + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-4px; width:2px; height:16px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"></span>`)
+            bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,#f87171 0 20%,#fbbf24 20% 80%,#60a5fa 80% 100%);">`
+                + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${spot.toFixed(2)}</span></span>`)
                 + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
         });
     }
@@ -322,13 +324,13 @@
                 group.style.display = 'inline-flex';
                 group.style.flexDirection = 'column';
                 group.style.gap = '2px';
-                group.style.minWidth = '86px';
+                group.style.minWidth = '180px';
                 group.appendChild(btn);
 
                 const spread = document.createElement('div');
                 spread.className = 'tm-ticker-spread';
                 spread.dataset.ticker = ticker;
-                spread.style.width = '86px';
+                spread.style.width = '180px';
                 spread.style.margin = '0 auto';
                 group.appendChild(spread);
                 toolbar.appendChild(group);
