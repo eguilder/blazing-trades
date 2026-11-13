@@ -140,6 +140,7 @@ def build_result(
     gamma,
     vega,
     implied_volatility,
+    underlying_implied_volatility,
     historical_volatility,
     underlying_price,
     underlying_change,
@@ -160,6 +161,7 @@ def build_result(
         "gamma": gamma,
         "vega": vega,
         "impliedVolatility": implied_volatility,
+        "underlyingImpliedVolatility": underlying_implied_volatility,
         "historicalVolatility": historical_volatility,
         "underlyingPrice": underlying_price,
         "underlyingChange": underlying_change,
@@ -291,6 +293,16 @@ def request_underlying_quotes(underlyings):
 
     try:
         qualified = ib.qualifyContracts(*contracts.values())
+        tickers = {
+            underlying: ib.reqMktData(
+                contract, "104,106", False, False
+            )
+            for underlying, contract in zip(contracts, qualified)
+            if getattr(contract, "conId", 0)
+        }
+        if tickers:
+            ib.sleep(2)
+
         quotes = {}
         for underlying, contract in zip(contracts, qualified):
             if not getattr(contract, "conId", 0):
@@ -305,16 +317,6 @@ def request_underlying_quotes(underlyings):
                 formatDate=1,
                 keepUpToDate=False
             )
-            volatility_bars = ib.reqHistoricalData(
-                contract,
-                endDateTime="",
-                durationStr="5 D",
-                barSizeSetting="1 day",
-                whatToShow="HISTORICAL_VOLATILITY",
-                useRTH=False,
-                formatDate=1,
-                keepUpToDate=False
-            )
             closes = [
                 float(bar.close)
                 for bar in bars
@@ -323,19 +325,12 @@ def request_underlying_quotes(underlyings):
             ]
             quotes[underlying] = {
                 "previousClose": closes[-2] if len(closes) >= 2 else (closes[-1] if closes else None),
-                "historicalVolatility": (
-                    float(volatility_bars[-1].close) / 100
-                    if volatility_bars
-                    and isinstance(getattr(volatility_bars[-1], "close", None), (int, float))
-                    and math.isfinite(float(volatility_bars[-1].close))
-                    and float(volatility_bars[-1].close) > 1
-                    else float(volatility_bars[-1].close)
-                    if volatility_bars
-                    and isinstance(getattr(volatility_bars[-1], "close", None), (int, float))
-                    and math.isfinite(float(volatility_bars[-1].close))
-                    else None
-                )
+                "historicalVolatility": getattr(tickers.get(underlying), "histVolatility", None),
+                "impliedVolatility": getattr(tickers.get(underlying), "impliedVolatility", None)
             }
+        for contract in qualified:
+            if getattr(contract, "conId", 0):
+                ib.cancelMktData(contract)
         return quotes
     except Exception as error:
         print(f"Unable to fetch underlying quotes: {error}")
@@ -568,6 +563,7 @@ def greeks():
                 c["delta"],
                 c["theta"], c["gamma"], c["vega"],
                 c.get("impliedVolatility"),
+                underlying_quotes.get(underlying, {}).get("impliedVolatility"),
                 underlying_quotes.get(underlying, {}).get("historicalVolatility"),
                 underlying_price,
                 underlying_change,

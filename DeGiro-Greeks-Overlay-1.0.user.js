@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.3.0
+// @version      1.4.0
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -813,9 +813,10 @@
             if (Number.isFinite(Number(g.underlyingPrice))) market.spot = Number(g.underlyingPrice);
             if (Number.isFinite(Number(g.underlyingChange))) market.change = Number(g.underlyingChange);
             if (Number.isFinite(Number(g.historicalVolatility))) market.hv = Number(g.historicalVolatility);
-            if (Number.isFinite(Number(g.impliedVolatility))) {
-                const impliedVolatility = Number(g.impliedVolatility);
-                market.iv = market.iv == null ? impliedVolatility : (market.iv + impliedVolatility) / 2;
+            if (Number.isFinite(Number(g.underlyingImpliedVolatility))) {
+                market.iv = Number(g.underlyingImpliedVolatility);
+            } else if (market.iv == null && Number.isFinite(Number(g.impliedVolatility))) {
+                market.iv = Number(g.impliedVolatility);
             }
             const spotChange = getSpotChange(ticker);
             if (spotChange != null) market.change = spotChange;
