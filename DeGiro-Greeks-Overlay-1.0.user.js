@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.4.0
+// @version      1.5.0
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -551,7 +551,8 @@
         deltaByTicker,
         thetaByTicker,
         premiumByTicker,
-        marketByTicker
+        marketByTicker,
+        positionVolByTicker
     ) {
 
         const bar = ensurePanel();
@@ -656,6 +657,13 @@
             })
             .join('');
 
+        const positionVolLines = Object.entries(positionVolByTicker)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([ticker, volatility]) => `<div style="display:flex; justify-content:space-between; gap:16px;">`
+                + `<span style="color:#94a3b8;">${ticker}</span>`
+                + `<span style="font-weight:bold; color:#e2e8f0;">${(volatility * 100).toFixed(1)}%</span></div>`)
+            .join('');
+
         const timestamp =
             fetchedAt
                 ? fetchedAt.toLocaleTimeString(
@@ -688,6 +696,9 @@
             + `<div style="border-top:1px solid #334155; margin:8px 0;"></div>`
             + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Implied Volatility</div>`
             + ivLines
+            + `<div style="border-top:1px solid #334155; margin:8px 0;"></div>`
+            + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Positions Volatility</div>`
+            + positionVolLines
             + `<div style="border-top:1px solid #334155; margin:8px 0;"></div>`
             + `<div style="margin-bottom:4px; color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Spot Price / Change</div>`
             + marketLines
@@ -733,6 +744,7 @@
         const deltaByTicker = {};
         const premiumByTicker = {};
         const marketByTicker = {};
+        const positionVolByTicker = {};
         let rendered = 0;
 
         greeks.forEach((g, idx) => {
@@ -808,6 +820,17 @@
                     + g.positionPremium;
             }
 
+            if (
+                Number(position.qty) < 0 &&
+                Number.isFinite(Number(g.impliedVolatility))
+            ) {
+                const ticker = g.underlying || position.underlying;
+                const current = positionVolByTicker[ticker] || { total: 0, count: 0 };
+                current.total += Number(g.impliedVolatility);
+                current.count += 1;
+                positionVolByTicker[ticker] = current;
+            }
+
             const ticker = g.underlying || position.underlying;
             const market = marketByTicker[ticker] || { spot: null, change: null, iv: null };
             if (Number.isFinite(Number(g.underlyingPrice))) market.spot = Number(g.underlyingPrice);
@@ -827,12 +850,18 @@
 
         if (rendered > 0) {
 
+            const averagePositionVolByTicker = Object.fromEntries(
+                Object.entries(positionVolByTicker)
+                    .map(([ticker, values]) => [ticker, values.total / values.count])
+            );
+
             showSummary(
                 totalTheta,
                 deltaByTicker,
                 thetaByTicker,
                 premiumByTicker,
-                marketByTicker
+                marketByTicker,
+                averagePositionVolByTicker
             );
 
             window.__tmOptionMarketData = marketByTicker;
