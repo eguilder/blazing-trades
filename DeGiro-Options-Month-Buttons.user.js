@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.0.4
-// @description  Quick month selection buttons for the DeGiro options chain
+// @version      1.1.0
+// @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
 // @downloadURL  https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -28,6 +28,8 @@
 
     let currentFilter = 'ALL';
     let currentTickerFilter = 'ALL';
+    let currentPositionFilter = 'ALL';
+    let marketData = window.__tmOptionMarketData || {};
 
         function extractMonth(text) {
         const m = text.match(/\d{1,2}(JAN|FEB|MRT|APR|MEI|JUN|JUL|AUG|SEP|OKT|NOV|DEC)\d{2}/i);
@@ -37,6 +39,33 @@
     function extractTicker(text) {
         const m = text.trim().match(/^([A-Z]+)\s+[CP]/);
         return m ? m[1] : null;
+    }
+
+    function extractOption(text) {
+        const m = text.trim().match(/^([A-Z]+)\s+([CP])(\d+(?:\.\d+)?)/);
+        return m ? { ticker: m[1], right: m[2], strike: Number(m[3]) } : null;
+    }
+
+    function getPositionSize(row) {
+        const sizeCell = row.querySelector('[data-field="size"]');
+        if (!sizeCell) return null;
+        const value = Number(sizeCell.textContent.replace(/[^\d,.-]/g, '').replace(',', '.'));
+        return Number.isFinite(value) ? value : null;
+    }
+
+    function pageSpot(ticker) {
+        const row = [...document.querySelectorAll('tbody tr')].find(candidate => {
+            const product = candidate.querySelector('[data-name="productName"]');
+            return product && product.textContent.trim().toUpperCase() === ticker;
+        });
+        if (!row) return null;
+        for (const name of ['price', 'lastPrice', 'currentPrice', 'closePrice']) {
+            const cell = row.querySelector(`[data-field="${name}"]`);
+            if (!cell) continue;
+            const value = Number(cell.textContent.replace(/[^\d,.-]/g, '').replace(',', '.'));
+            if (Number.isFinite(value)) return value;
+        }
+        return null;
     }
 
         function getOptionsSection() {
@@ -66,8 +95,14 @@
             const tickerMatch =
                 currentTickerFilter === 'ALL' || rowTicker === currentTickerFilter;
 
+            const size = getPositionSize(row);
+            const positionMatch =
+                currentPositionFilter === 'ALL' ||
+                (currentPositionFilter === 'LONG' && size > 0) ||
+                (currentPositionFilter === 'SHORT' && size < 0);
+
             row.style.display =
-                monthMatch && tickerMatch ? '' : 'none';
+                monthMatch && tickerMatch && positionMatch ? '' : 'none';
         });
 
         document.querySelectorAll('.tm-month-btn').forEach(btn => {
@@ -83,6 +118,15 @@
             btn.style.color = active ? '#fff' : '';
             btn.style.fontWeight = active ? 'bold' : '';
         });
+
+        document.querySelectorAll('.tm-position-btn').forEach(btn => {
+            const active = btn.dataset.position === currentPositionFilter;
+            btn.style.background = active ? '#a855f7' : '';
+            btn.style.color = active ? '#fff' : '';
+            btn.style.fontWeight = active ? 'bold' : '';
+        });
+
+        updateTickerSpreads();
     }
 
     function applyFilter(month) {
@@ -93,6 +137,45 @@
     function applyTickerFilter(ticker) {
         currentTickerFilter = ticker;
         applyFilters();
+    }
+
+    function applyPositionFilter(position) {
+        currentPositionFilter = position;
+        applyFilters();
+    }
+
+    function updateTickerSpreads() {
+        document.querySelectorAll('.tm-ticker-spread').forEach(bar => {
+            const ticker = bar.dataset.ticker;
+            const rows = getOptionRows().filter(row => {
+                const product = row.querySelector('[data-name="productName"]');
+                const option = product && extractOption(product.textContent);
+                return option && option.ticker === ticker
+                    && (currentFilter === 'ALL' || extractMonth(product.textContent) === currentFilter);
+            });
+            const strikes = rows.map(row => Number(extractOption(
+                row.querySelector('[data-name="productName"]').textContent
+            ).strike)).filter(Number.isFinite).sort((a, b) => a - b);
+
+            if (!strikes.length) {
+                bar.style.display = 'none';
+                return;
+            }
+
+            const low = strikes[0];
+            const high = strikes[strikes.length - 1];
+            const sharedSpot = marketData[ticker] && Number(marketData[ticker].spot);
+            const spot = Number.isFinite(sharedSpot) ? sharedSpot : pageSpot(ticker);
+            const spotPosition = Number.isFinite(spot) && high > low
+                ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
+                : null;
+
+            bar.style.display = 'block';
+            bar.title = `${ticker}: ${low} – ${high}${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)}`}`;
+            bar.innerHTML = `<div style="position:relative; height:8px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,#f87171 0 20%,#fbbf24 20% 80%,#60a5fa 80% 100%);">`
+                + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-4px; width:2px; height:16px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"></span>`)
+                + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
+        });
     }
 
     function buildButtons() {
@@ -144,8 +227,10 @@
 
         const desiredMonths = ['ALL', ...months];
         const desiredTickers = ['ALL', ...tickers];
+        const desiredPositions = ['ALL', 'LONG', 'SHORT'];
         const desiredKey =
-            desiredMonths.join(',') + '|' + desiredTickers.join(',');
+            desiredMonths.join(',') + '|' + desiredTickers.join(',') + '|'
+            + desiredPositions.join(',');
 
         if (toolbar.dataset.filterKey === desiredKey) {
             applyFilters();
@@ -198,15 +283,50 @@
             btn.className = 'tm-ticker-btn';
             btn.dataset.ticker = ticker;
 
-            btn.textContent = ticker;
-
             btn.style.padding = '4px 10px';
             btn.style.border = '1px solid #777';
             btn.style.borderRadius = '4px';
             btn.style.cursor = 'pointer';
 
+            btn.textContent = ticker;
             btn.onclick = () => applyTickerFilter(ticker);
 
+            if (ticker === 'ALL') {
+                toolbar.appendChild(btn);
+            } else {
+                const group = document.createElement('div');
+                group.className = 'tm-ticker-group';
+                group.style.display = 'inline-flex';
+                group.style.flexDirection = 'column';
+                group.style.gap = '2px';
+                group.style.minWidth = '86px';
+                group.appendChild(btn);
+
+                const spread = document.createElement('div');
+                spread.className = 'tm-ticker-spread';
+                spread.dataset.ticker = ticker;
+                spread.style.width = '86px';
+                spread.style.margin = '0 auto';
+                group.appendChild(spread);
+                toolbar.appendChild(group);
+            }
+        });
+
+        const positionDivider = document.createElement('span');
+        positionDivider.style.borderLeft = '1px solid #555';
+        positionDivider.style.margin = '0 6px';
+        toolbar.appendChild(positionDivider);
+
+        desiredPositions.forEach(position => {
+            const btn = document.createElement('button');
+            btn.className = 'tm-position-btn';
+            btn.dataset.position = position;
+            btn.textContent = position === 'ALL' ? 'ALL POSITIONS' : position;
+            btn.style.padding = '4px 10px';
+            btn.style.border = '1px solid #777';
+            btn.style.borderRadius = '4px';
+            btn.style.cursor = 'pointer';
+            btn.onclick = () => applyPositionFilter(position);
             toolbar.appendChild(btn);
         });
 
@@ -218,8 +338,17 @@
             currentTickerFilter = 'ALL';
         }
 
+        if (!desiredPositions.includes(currentPositionFilter)) {
+            currentPositionFilter = 'ALL';
+        }
+
         applyFilters();
     }
+
+    window.addEventListener('tm-option-market-data', event => {
+        marketData = event.detail || {};
+        updateTickerSpreads();
+    });
 
     const observer = new MutationObserver(() => {
         buildButtons();

@@ -139,6 +139,7 @@ def build_result(
     theta,
     gamma,
     vega,
+    implied_volatility,
     underlying_price,
     in_the_money,
     qty,
@@ -156,6 +157,7 @@ def build_result(
         "theta": theta,
         "gamma": gamma,
         "vega": vega,
+        "impliedVolatility": implied_volatility,
         "underlyingPrice": underlying_price,
         "inTheMoney": in_the_money,
         "positionDelta":
@@ -424,9 +426,10 @@ def greeks():
                 theta = g.theta
                 gamma = g.gamma
                 vega = g.vega
+                implied_volatility = getattr(g, "impliedVol", None)
                 underlying_price = getattr(g, "undPrice", None)
             else:
-                delta = theta = gamma = vega = underlying_price = None
+                delta = theta = gamma = vega = implied_volatility = underlying_price = None
 
             premium_trace = current_premium_details(
                 ticker,
@@ -453,6 +456,7 @@ def greeks():
                     "theta": theta,
                     "gamma": gamma,
                     "vega": vega,
+                    "impliedVolatility": implied_volatility,
                     "underlyingPrice": underlying_price,
                     "inTheMoney": in_the_money,
                     "premiumPrice": premium_price,
@@ -480,6 +484,7 @@ def greeks():
                 c.get("premiumMultiplier", 1 if underlying == "ADY" else c["multiplier"]),
                 c["delta"],
                 c["theta"], c["gamma"], c["vega"],
+                c.get("impliedVolatility"),
                 c.get("underlyingPrice"), c.get("inTheMoney"), qty,
                 c.get("premiumPrice"), c.get("premiumTrace")
             ))

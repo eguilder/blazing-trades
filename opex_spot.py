@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 # ============================================================
 
 TICKERS = [
-    "TSLA",
+    "MSTR",
     "NVDA",
     "MPWR",
     "MU",
