@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.5
+// @version      1.1.6
 // @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -147,9 +147,11 @@
                 return option && option.ticker === ticker
                     && (currentFilter === 'ALL' || extractMonth(product.textContent) === currentFilter);
             });
-            const strikes = rows.map(row => Number(extractOption(
-                row.querySelector('[data-name="productName"]').textContent
-            ).strike)).filter(Number.isFinite).sort((a, b) => a - b);
+            const strikes = [...new Set(
+                rows.map(row => Number(extractOption(
+                    row.querySelector('[data-name="productName"]').textContent
+                ).strike)).filter(Number.isFinite)
+            )].sort((a, b) => a - b);
 
             if (!strikes.length) {
                 if (bar.style.display !== 'none') {
@@ -160,6 +162,8 @@
 
             const low = strikes[0];
             const high = strikes[strikes.length - 1];
+            const innerLow = strikes.length > 1 ? strikes[1] : low;
+            const innerHigh = strikes.length > 1 ? strikes[strikes.length - 2] : high;
             const spot = marketData[ticker] && Number(marketData[ticker].spot);
             const spotPosition = Number.isFinite(spot)
                 ? high > low
@@ -181,7 +185,8 @@
             bar.dataset.renderKey = renderKey;
 
             bar.style.display = 'block';
-            bar.title = `${ticker}: ${low} – ${high}${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)}`}`;
+            bar.title = `${ticker} inner spread: ${innerLow} - ${innerHigh}`
+                + `${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)}`}`;
             bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,#f87171 0 20%,#fbbf24 20% 80%,#60a5fa 80% 100%);">`
                 + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${spot.toFixed(2)}</span></span>`)
                 + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
