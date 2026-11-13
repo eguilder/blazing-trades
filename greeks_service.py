@@ -140,6 +140,7 @@ def build_result(
     gamma,
     vega,
     implied_volatility,
+    historical_volatility,
     underlying_price,
     underlying_change,
     in_the_money,
@@ -159,6 +160,7 @@ def build_result(
         "gamma": gamma,
         "vega": vega,
         "impliedVolatility": implied_volatility,
+        "historicalVolatility": historical_volatility,
         "underlyingPrice": underlying_price,
         "underlyingChange": underlying_change,
         "inTheMoney": in_the_money,
@@ -303,6 +305,16 @@ def request_underlying_quotes(underlyings):
                 formatDate=1,
                 keepUpToDate=False
             )
+            volatility_bars = ib.reqHistoricalData(
+                contract,
+                endDateTime="",
+                durationStr="5 D",
+                barSizeSetting="1 day",
+                whatToShow="HISTORICAL_VOLATILITY",
+                useRTH=False,
+                formatDate=1,
+                keepUpToDate=False
+            )
             closes = [
                 float(bar.close)
                 for bar in bars
@@ -310,7 +322,19 @@ def request_underlying_quotes(underlyings):
                 and math.isfinite(float(bar.close))
             ]
             quotes[underlying] = {
-                "previousClose": closes[-2] if len(closes) >= 2 else (closes[-1] if closes else None)
+                "previousClose": closes[-2] if len(closes) >= 2 else (closes[-1] if closes else None),
+                "historicalVolatility": (
+                    float(volatility_bars[-1].close) / 100
+                    if volatility_bars
+                    and isinstance(getattr(volatility_bars[-1], "close", None), (int, float))
+                    and math.isfinite(float(volatility_bars[-1].close))
+                    and float(volatility_bars[-1].close) > 1
+                    else float(volatility_bars[-1].close)
+                    if volatility_bars
+                    and isinstance(getattr(volatility_bars[-1], "close", None), (int, float))
+                    and math.isfinite(float(volatility_bars[-1].close))
+                    else None
+                )
             }
         return quotes
     except Exception as error:
@@ -544,6 +568,7 @@ def greeks():
                 c["delta"],
                 c["theta"], c["gamma"], c["vega"],
                 c.get("impliedVolatility"),
+                underlying_quotes.get(underlying, {}).get("historicalVolatility"),
                 underlying_price,
                 underlying_change,
                 c.get("inTheMoney"), qty,

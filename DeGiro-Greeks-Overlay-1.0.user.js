@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.2.1
+// @version      1.3.0
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -638,9 +638,22 @@
 
         const ivLines = Object.entries(marketByTicker)
             .sort(([left], [right]) => left.localeCompare(right))
-            .map(([ticker, market]) => `<div style="display:flex; justify-content:space-between; gap:16px;">`
-                + `<span style="color:#94a3b8;">${ticker}</span>`
-                + `<span style="font-weight:bold;">${market.iv == null ? '-' : `${(market.iv * 100).toFixed(1)}%`}</span></div>`)
+            .map(([ticker, market]) => {
+                const ratio = market.iv != null && market.hv > 0
+                    ? market.iv / market.hv
+                    : null;
+                const ivColor = ratio == null
+                    ? '#e2e8f0'
+                    : ratio >= 0.9
+                        ? '#f87171'
+                        : ratio < 0.7
+                            ? '#4ade80'
+                            : '#fbbf24';
+                const ratioText = ratio == null ? '' : ` <span style="color:#94a3b8; font-size:11px;">(${(ratio * 100).toFixed(0)}% of HV)</span>`;
+                return `<div style="display:flex; justify-content:space-between; gap:16px;">`
+                    + `<span style="color:#94a3b8;">${ticker}</span>`
+                    + `<span style="font-weight:bold; color:${ivColor};">${market.iv == null ? '-' : `${(market.iv * 100).toFixed(1)}%`}${ratioText}</span></div>`;
+            })
             .join('');
 
         const timestamp =
@@ -799,6 +812,7 @@
             const market = marketByTicker[ticker] || { spot: null, change: null, iv: null };
             if (Number.isFinite(Number(g.underlyingPrice))) market.spot = Number(g.underlyingPrice);
             if (Number.isFinite(Number(g.underlyingChange))) market.change = Number(g.underlyingChange);
+            if (Number.isFinite(Number(g.historicalVolatility))) market.hv = Number(g.historicalVolatility);
             if (Number.isFinite(Number(g.impliedVolatility))) {
                 const impliedVolatility = Number(g.impliedVolatility);
                 market.iv = market.iv == null ? impliedVolatility : (market.iv + impliedVolatility) / 2;
