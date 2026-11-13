@@ -273,7 +273,7 @@ def greeks_are_ready(greeks):
 
 
 def request_underlying_quotes(underlyings):
-    """Fetch current price and change from the previous close per ticker."""
+    """Fetch the previous completed daily close per ticker."""
     contracts = {
         underlying: Stock(
             UNDERLYINGS[underlying]["symbol"],
@@ -288,31 +288,29 @@ def request_underlying_quotes(underlyings):
 
     try:
         qualified = ib.qualifyContracts(*contracts.values())
-        tickers = {}
-        for underlying, contract in zip(contracts, qualified):
-            if getattr(contract, "conId", 0):
-                tickers[underlying] = ib.reqMktData(contract, "", False, False)
-        if tickers:
-            ib.sleep(2)
-
         quotes = {}
-        for underlying, ticker in tickers.items():
-            try:
-                spot = ticker.marketPrice()
-            except Exception:
-                spot = None
-            close = getattr(ticker, "close", None)
-            if not isinstance(spot, (int, float)) or not math.isfinite(spot):
-                spot = None
-            if not isinstance(close, (int, float)) or not math.isfinite(close):
-                close = None
-            quotes[underlying] = {
-                "spot": spot,
-                "change": spot - close if spot is not None and close is not None else None
-            }
         for underlying, contract in zip(contracts, qualified):
-            if getattr(contract, "conId", 0):
-                ib.cancelMktData(contract)
+            if not getattr(contract, "conId", 0):
+                continue
+            bars = ib.reqHistoricalData(
+                contract,
+                endDateTime="",
+                durationStr="5 D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=False,
+                formatDate=1,
+                keepUpToDate=False
+            )
+            closes = [
+                float(bar.close)
+                for bar in bars
+                if isinstance(getattr(bar, "close", None), (int, float))
+                and math.isfinite(float(bar.close))
+            ]
+            quotes[underlying] = {
+                "previousClose": closes[-2] if len(closes) >= 2 else (closes[-1] if closes else None)
+            }
         return quotes
     except Exception as error:
         print(f"Unable to fetch underlying quotes: {error}")
@@ -532,14 +530,21 @@ def greeks():
 
         if key in cache:
             c = cache[key]
+            underlying_price = c.get("underlyingPrice")
+            previous_close = underlying_quotes.get(underlying, {}).get("previousClose")
+            underlying_change = (
+                underlying_price - previous_close
+                if underlying_price is not None and previous_close is not None
+                else None
+            )
             results.append(build_result(
                 row_id, key, underlying, c["multiplier"],
                 c.get("premiumMultiplier", 1 if underlying == "ADY" else c["multiplier"]),
                 c["delta"],
                 c["theta"], c["gamma"], c["vega"],
                 c.get("impliedVolatility"),
-                c.get("underlyingPrice"),
-                underlying_quotes.get(underlying, {}).get("change"),
+                underlying_price,
+                underlying_change,
                 c.get("inTheMoney"), qty,
                 c.get("premiumPrice"), c.get("premiumTrace")
             ))
