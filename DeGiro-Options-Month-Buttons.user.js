@@ -21,6 +21,14 @@
         return;
     }
 
+    // DeGiro is a SPA and can evaluate userscripts more than once while
+    // navigating. Keep a single observer and interval alive.
+    const INSTANCE_KEY = '__tmDeGiroOptionsMonthButtons';
+    if (window[INSTANCE_KEY]) {
+        return;
+    }
+    window[INSTANCE_KEY] = true;
+
     const MONTHS = [
         'JAN','FEB','MRT','APR','MEI','JUN',
         'JUL','AUG','SEP','OKT','NOV','DEC'
@@ -158,7 +166,9 @@
             ).strike)).filter(Number.isFinite).sort((a, b) => a - b);
 
             if (!strikes.length) {
-                bar.style.display = 'none';
+                if (bar.style.display !== 'none') {
+                    bar.style.display = 'none';
+                }
                 return;
             }
 
@@ -169,6 +179,19 @@
             const spotPosition = Number.isFinite(spot) && high > low
                 ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
                 : null;
+
+            const renderKey = [
+                currentFilter,
+                low,
+                high,
+                Number.isFinite(spot) ? spot.toFixed(4) : '-'
+            ].join('|');
+
+            if (bar.dataset.renderKey === renderKey) {
+                return;
+            }
+
+            bar.dataset.renderKey = renderKey;
 
             bar.style.display = 'block';
             bar.title = `${ticker}: ${low} – ${high}${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)}`}`;
