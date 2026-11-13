@@ -277,8 +277,9 @@ def request_underlying_quotes(underlyings):
     contracts = {
         underlying: Stock(
             UNDERLYINGS[underlying]["symbol"],
-            UNDERLYINGS[underlying]["exchange"],
-            "EUR"
+            "SMART",
+            "EUR",
+            primaryExchange="AEB"
         )
         for underlying in underlyings
         if underlying in UNDERLYINGS
