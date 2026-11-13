@@ -141,6 +141,7 @@ def build_result(
     vega,
     implied_volatility,
     underlying_price,
+    underlying_change,
     in_the_money,
     qty,
     premium_price,
@@ -159,6 +160,7 @@ def build_result(
         "vega": vega,
         "impliedVolatility": implied_volatility,
         "underlyingPrice": underlying_price,
+        "underlyingChange": underlying_change,
         "inTheMoney": in_the_money,
         "positionDelta":
             delta * qty * multiplier
@@ -270,6 +272,53 @@ def greeks_are_ready(greeks):
     )
 
 
+def request_underlying_quotes(underlyings):
+    """Fetch current price and change from the previous close per ticker."""
+    contracts = {
+        underlying: Stock(
+            UNDERLYINGS[underlying]["symbol"],
+            UNDERLYINGS[underlying]["exchange"],
+            "EUR"
+        )
+        for underlying in underlyings
+        if underlying in UNDERLYINGS
+    }
+    if not contracts:
+        return {}
+
+    try:
+        qualified = ib.qualifyContracts(*contracts.values())
+        tickers = {}
+        for underlying, contract in zip(contracts, qualified):
+            if getattr(contract, "conId", 0):
+                tickers[underlying] = ib.reqMktData(contract, "", False, False)
+        if tickers:
+            ib.sleep(2)
+
+        quotes = {}
+        for underlying, ticker in tickers.items():
+            try:
+                spot = ticker.marketPrice()
+            except Exception:
+                spot = None
+            close = getattr(ticker, "close", None)
+            if not isinstance(spot, (int, float)) or not math.isfinite(spot):
+                spot = None
+            if not isinstance(close, (int, float)) or not math.isfinite(close):
+                close = None
+            quotes[underlying] = {
+                "spot": spot,
+                "change": spot - close if spot is not None and close is not None else None
+            }
+        for underlying, contract in zip(contracts, qualified):
+            if getattr(contract, "conId", 0):
+                ib.cancelMktData(contract)
+        return quotes
+    except Exception as error:
+        print(f"Unable to fetch underlying quotes: {error}")
+        return {}
+
+
 def add_theta_summary(results):
 
     theta_by_ticker = defaultdict(float)
@@ -314,6 +363,10 @@ def greeks():
     connect_ib()
 
     positions = request.get_json(force=True)
+
+    underlying_quotes = request_underlying_quotes({
+        pos.get("underlying") for pos in positions
+    })
 
     results = []
     pending_by_key = {}
@@ -485,7 +538,9 @@ def greeks():
                 c["delta"],
                 c["theta"], c["gamma"], c["vega"],
                 c.get("impliedVolatility"),
-                c.get("underlyingPrice"), c.get("inTheMoney"), qty,
+                c.get("underlyingPrice"),
+                underlying_quotes.get(underlying, {}).get("change"),
+                c.get("inTheMoney"), qty,
                 c.get("premiumPrice"), c.get("premiumTrace")
             ))
         elif key in pending_by_key and pending_by_key[key].get("error"):
