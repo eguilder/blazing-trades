@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.1.9
+// @version      1.2.0
 // @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -153,35 +153,22 @@
                 ).strike)).filter(Number.isFinite)
             )].sort((a, b) => a - b);
 
-            const legsByStrike = new Map();
-            rows.forEach(row => {
+            const legs = rows.map(row => {
                 const option = extractOption(
                     row.querySelector('[data-name="productName"]').textContent
                 );
                 const size = getPositionSize(row);
-                if (!option || !Number.isFinite(size) || size === 0) return;
-                legsByStrike.set(
-                    option.strike,
-                    (legsByStrike.get(option.strike) || 0) + size
-                );
-            });
-
-            const longStrikes = [...legsByStrike]
-                .filter(([, size]) => size > 0)
-                .map(([strike]) => strike)
-                .sort((a, b) => a - b);
-            const shortStrikes = [...legsByStrike]
-                .filter(([, size]) => size < 0)
-                .map(([strike]) => strike)
-                .sort((a, b) => a - b);
-            const shortLegs = rows.map(row => {
-                const product = row.querySelector('[data-name="productName"]');
-                const option = product && extractOption(product.textContent);
-                const size = getPositionSize(row);
-                return option && Number.isFinite(size) && size < 0
-                    ? option
+                return option && Number.isFinite(size) && size !== 0
+                    ? { ...option, size }
                     : null;
             }).filter(Boolean);
+
+            const longLegs = legs.filter(({ size }) => size > 0);
+            const shortLegs = legs.filter(({ size }) => size < 0);
+            const longStrikes = [...new Set(longLegs.map(({ strike }) => strike))]
+                .sort((a, b) => a - b);
+            const shortStrikes = [...new Set(shortLegs.map(({ strike }) => strike))]
+                .sort((a, b) => a - b);
 
             if (!strikes.length) {
                 if (bar.style.display !== 'none') {
@@ -204,8 +191,7 @@
                 low,
                 high,
                 Number.isFinite(spot) ? spot.toFixed(4) : '-',
-                [...legsByStrike].map(([strike, size]) => `${strike}:${size}`).join(','),
-                shortLegs.map(({ right, strike }) => `${right}:${strike}`).join(',')
+                legs.map(({ right, strike, size }) => `${right}:${strike}:${size}`).join(',')
             ].join('|');
 
             if (bar.dataset.renderKey === renderKey) {
@@ -226,33 +212,38 @@
             const strikePosition = strike => high > low
                 ? Math.max(0, Math.min(100, ((strike - low) / (high - low)) * 100))
                 : 50;
-            let goldStart = 20;
-            let goldEnd = 80;
-            let gradient = '#f87171 0 20%,#fbbf24 20% 80%,#60a5fa 80% 100%';
-            if (shortStrikes.length >= 2) {
-                goldStart = strikePosition(shortStrikes[0]);
-                goldEnd = strikePosition(shortStrikes[shortStrikes.length - 1]);
-            } else if (shortStrikes.length === 1) {
-                const shortPosition = strikePosition(shortStrikes[0]);
-                goldStart = Math.max(0, shortPosition - 2);
-                goldEnd = Math.min(100, shortPosition + 2);
-            }
+            const shortPosition = strike => strikePosition(strike);
+            const goldStart = shortStrikes.length
+                ? Math.max(0, shortPosition(shortStrikes[0]) - 1)
+                : 0;
+            const goldEnd = shortStrikes.length
+                ? Math.min(100, shortPosition(shortStrikes[shortStrikes.length - 1]) + 1)
+                : 0;
 
-            // A short put is ITM below its strike; a short call is ITM above
-            // its strike. The old fixed red-left/blue-right gradient made a
-            // short call look ITM while spot was still below the strike.
             const hasShortPut = shortLegs.some(({ right }) => right === 'P');
             const hasShortCall = shortLegs.some(({ right }) => right === 'C');
+            let gradient = '#334155 0 100%';
+            // A short put is ITM below its strike; a short call is ITM above
+            // its strike. Keep the short-strike band narrow so spot is easy
+            // to compare with the actual strike locations.
             if (hasShortCall && !hasShortPut) {
-                gradient = `#60a5fa 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#f87171 ${goldEnd}% 100%`;
+                gradient = `#334155 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#f87171 ${goldEnd}% 100%`;
             } else if (hasShortCall && hasShortPut) {
                 gradient = `#f87171 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#f87171 ${goldEnd}% 100%`;
+            } else if (hasShortPut) {
+                gradient = `#f87171 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#334155 ${goldEnd}% 100%`;
             }
+
+            const longMarkers = longStrikes.map(strike => {
+                const position = strikePosition(strike);
+                return `<span title="long ${strike}" style="position:absolute; left:${position}%; top:-3px; width:3px; height:14px; background:#60a5fa; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"></span>`;
+            }).join('');
 
             bar.style.display = 'block';
             bar.title = `${ticker} | long: ${formatStrikes(longStrikes)} | short: ${formatStrikes(shortStrikes)}`
                 + `${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)} (${spotRelation})`}`;
             bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,${gradient});">`
+                + longMarkers
                 + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${spot.toFixed(2)}</span></span>`)
                 + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
         });
