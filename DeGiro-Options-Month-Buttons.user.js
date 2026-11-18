@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.2.0
+// @version      1.3.0
 // @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -212,31 +212,72 @@
             const strikePosition = strike => high > low
                 ? Math.max(0, Math.min(100, ((strike - low) / (high - low)) * 100))
                 : 50;
-            const shortPosition = strike => strikePosition(strike);
-            const goldStart = shortStrikes.length
-                ? Math.max(0, shortPosition(shortStrikes[0]) - 1)
-                : 0;
-            const goldEnd = shortStrikes.length
-                ? Math.min(100, shortPosition(shortStrikes[shortStrikes.length - 1]) + 1)
-                : 0;
 
-            const hasShortPut = shortLegs.some(({ right }) => right === 'P');
-            const hasShortCall = shortLegs.some(({ right }) => right === 'C');
-            let gradient = '#334155 0 100%';
-            // A short put is ITM below its strike; a short call is ITM above
-            // its strike. Keep the short-strike band narrow so spot is easy
-            // to compare with the actual strike locations.
-            if (hasShortCall && !hasShortPut) {
-                gradient = `#334155 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#f87171 ${goldEnd}% 100%`;
-            } else if (hasShortCall && hasShortPut) {
-                gradient = `#f87171 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#f87171 ${goldEnd}% 100%`;
-            } else if (hasShortPut) {
-                gradient = `#f87171 0 ${goldStart}%,#fbbf24 ${goldStart}% ${goldEnd}%,#334155 ${goldEnd}% 100%`;
+            const putLongStrikes = longLegs
+                .filter(({ right }) => right === 'P')
+                .map(({ strike }) => strike);
+            const callLongStrikes = longLegs
+                .filter(({ right }) => right === 'C')
+                .map(({ strike }) => strike);
+            const redRanges = [];
+
+            // Yellow is the OTM area. Red is reserved for the credit-spread
+            // interval between a short leg and its protective long leg.
+            shortLegs.forEach(({ right, strike }) => {
+                if (right === 'P') {
+                    const protectiveLong = putLongStrikes.filter(longStrike => longStrike < strike);
+                    if (protectiveLong.length) {
+                        redRanges.push([
+                            Math.min(...protectiveLong),
+                            strike
+                        ]);
+                    }
+                } else if (right === 'C') {
+                    const protectiveLong = callLongStrikes.filter(longStrike => longStrike > strike);
+                    if (protectiveLong.length) {
+                        redRanges.push([
+                            strike,
+                            Math.max(...protectiveLong)
+                        ]);
+                    }
+                }
+            });
+
+            const redSegments = redRanges
+                .map(([start, end]) => [strikePosition(start), strikePosition(end)])
+                .sort(([startA], [startB]) => startA - startB)
+                .reduce((merged, [start, end]) => {
+                    const previous = merged[merged.length - 1];
+                    if (previous && start <= previous[1]) {
+                        previous[1] = Math.max(previous[1], end);
+                    } else {
+                        merged.push([start, end]);
+                    }
+                    return merged;
+                }, []);
+            const gradientParts = [];
+            let gradientCursor = 0;
+            redSegments.forEach(([start, end]) => {
+                if (start > gradientCursor) {
+                    gradientParts.push(`#fbbf24 ${gradientCursor}% ${start}%`);
+                }
+                gradientParts.push(`#f87171 ${start}% ${end}%`);
+                gradientCursor = end;
+            });
+            if (gradientCursor < 100) {
+                gradientParts.push(`#fbbf24 ${gradientCursor}% 100%`);
             }
+            const gradient = gradientParts.length
+                ? gradientParts.join(',')
+                : '#fbbf24 0 100%';
 
             const longMarkers = longStrikes.map(strike => {
                 const position = strikePosition(strike);
                 return `<span title="long ${strike}" style="position:absolute; left:${position}%; top:-3px; width:3px; height:14px; background:#60a5fa; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"></span>`;
+            }).join('');
+            const shortMarkers = shortStrikes.map(strike => {
+                const position = strikePosition(strike);
+                return `<span title="short ${strike}" style="position:absolute; left:${position}%; top:-3px; width:4px; height:14px; background:#f97316; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px); z-index:2;"></span>`;
             }).join('');
 
             bar.style.display = 'block';
@@ -244,6 +285,7 @@
                 + `${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)} (${spotRelation})`}`;
             bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,${gradient});">`
                 + longMarkers
+                + shortMarkers
                 + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${spot.toFixed(2)}</span></span>`)
                 + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
         });
