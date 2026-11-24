@@ -177,18 +177,25 @@
                 return;
             }
 
+            const putLongStrikes = longLegs
+                .filter(({ right }) => right === 'P')
+                .map(({ strike }) => strike);
+            const callLongStrikes = longLegs
+                .filter(({ right }) => right === 'C')
+                .map(({ strike }) => strike);
             const spot = marketData[ticker] && Number(marketData[ticker].spot);
-            // Keep spot centered so the distance to either side of the
-            // spread remains directly comparable. The furthest strike sets
-            // the same range on both sides of spot.
-            const low = Number.isFinite(spot)
-                ? spot - Math.max(...strikes.map(strike => Math.abs(strike - spot)), 1)
-                : strikes[0];
-            const high = Number.isFinite(spot)
-                ? spot + Math.max(...strikes.map(strike => Math.abs(strike - spot)), 1)
-                : strikes[strikes.length - 1];
-            const spotPosition = Number.isFinite(spot)
-                ? 50
+            // For a condor, use the protective long put and long call as the
+            // actual range endpoints. There is no useful range outside those
+            // strikes, and spot should be positioned proportionately within
+            // the resulting interval.
+            const condorLongPut = putLongStrikes.length ? Math.min(...putLongStrikes) : null;
+            const condorLongCall = callLongStrikes.length ? Math.max(...callLongStrikes) : null;
+            const isCondor = condorLongPut != null && condorLongCall != null
+                && condorLongPut < condorLongCall;
+            const low = isCondor ? condorLongPut : strikes[0];
+            const high = isCondor ? condorLongCall : strikes[strikes.length - 1];
+            const spotPosition = Number.isFinite(spot) && high > low
+                ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
                 : null;
 
             const renderKey = [
@@ -221,12 +228,6 @@
                 ? Math.max(0, Math.min(100, ((strike - low) / (high - low)) * 100))
                 : 50;
 
-            const putLongStrikes = longLegs
-                .filter(({ right }) => right === 'P')
-                .map(({ strike }) => strike);
-            const callLongStrikes = longLegs
-                .filter(({ right }) => right === 'C')
-                .map(({ strike }) => strike);
             const redRanges = [];
 
             // Yellow is the OTM area. Red is reserved for the credit-spread
