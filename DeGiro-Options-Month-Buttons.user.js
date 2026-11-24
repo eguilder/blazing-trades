@@ -178,19 +178,17 @@
             }
 
             const spot = marketData[ticker] && Number(marketData[ticker].spot);
-            // Include spot in the scale. Otherwise a one-sided spread (for
-            // example, a call credit spread with spot below both strikes)
-            // clamps the spot marker to an edge and makes the spread wing
-            // occupy the entire bar.
-            const scaleValues = Number.isFinite(spot)
-                ? [...strikes, spot]
-                : strikes;
-            const low = Math.min(...scaleValues);
-            const high = Math.max(...scaleValues);
+            // Keep spot centered so the distance to either side of the
+            // spread remains directly comparable. The furthest strike sets
+            // the same range on both sides of spot.
+            const low = Number.isFinite(spot)
+                ? spot - Math.max(...strikes.map(strike => Math.abs(strike - spot)), 1)
+                : strikes[0];
+            const high = Number.isFinite(spot)
+                ? spot + Math.max(...strikes.map(strike => Math.abs(strike - spot)), 1)
+                : strikes[strikes.length - 1];
             const spotPosition = Number.isFinite(spot)
-                ? high > low
-                    ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
-                    : 50
+                ? 50
                 : null;
 
             const renderKey = [
@@ -215,7 +213,10 @@
                 else spotRelation = shortStrikes.length > 1 ? 'inside short spread' : 'at/inside spread';
             }
 
-            const formatStrikes = values => values.length ? values.join(', ') : '-';
+            const formatPrice = value => Math.round(value).toString();
+            const formatStrikes = values => values.length
+                ? values.map(formatPrice).join(', ')
+                : '-';
             const strikePosition = strike => high > low
                 ? Math.max(0, Math.min(100, ((strike - low) / (high - low)) * 100))
                 : 50;
@@ -289,12 +290,12 @@
 
             bar.style.display = 'block';
             bar.title = `${ticker} | long: ${formatStrikes(longStrikes)} | short: ${formatStrikes(shortStrikes)}`
-                + `${spotPosition == null ? '' : ` | spot ${spot.toFixed(2)} (${spotRelation})`}`;
+                + `${spotPosition == null ? '' : ` | spot ${formatPrice(spot)} (${spotRelation})`}`;
             bar.innerHTML = `<div style="position:relative; height:8px; margin-top:10px; border-radius:5px; overflow:visible; background:linear-gradient(90deg,${gradient});">`
                 + longMarkers
                 + shortMarkers
-                + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${spot.toFixed(2)}</span></span>`)
-                + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${low}</span><span>${high}</span></div>`;
+                + (spotPosition == null ? '' : `<span style="position:absolute; left:${spotPosition}%; top:-7px; width:2px; height:22px; background:#fff; box-shadow:0 0 0 1px #0f172a; transform:translateX(-1px);"><span style="position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:#0f172a; color:#fff; font-size:9px; line-height:12px; white-space:nowrap;">${formatPrice(spot)}</span></span>`)
+                + `</div><div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; line-height:12px;"><span>${formatPrice(low)}</span><span>${formatPrice(high)}</span></div>`;
         });
     }
 
