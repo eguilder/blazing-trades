@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Options Month Buttons
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.3.0
+// @version      1.3.1
 // @description  Quick month selection buttons and option spread visuals for the DeGiro options chain
 // @match        https://trader.degiro.nl/*
 // @updateURL    https://raw.githubusercontent.com/eguilder/blazing-trades/main/DeGiro-Options-Month-Buttons.user.js
@@ -177,9 +177,16 @@
                 return;
             }
 
-            const low = strikes[0];
-            const high = strikes[strikes.length - 1];
             const spot = marketData[ticker] && Number(marketData[ticker].spot);
+            // Include spot in the scale. Otherwise a one-sided spread (for
+            // example, a call credit spread with spot below both strikes)
+            // clamps the spot marker to an edge and makes the spread wing
+            // occupy the entire bar.
+            const scaleValues = Number.isFinite(spot)
+                ? [...strikes, spot]
+                : strikes;
+            const low = Math.min(...scaleValues);
+            const high = Math.max(...scaleValues);
             const spotPosition = Number.isFinite(spot)
                 ? high > low
                     ? Math.max(0, Math.min(100, ((spot - low) / (high - low)) * 100))
