@@ -328,6 +328,15 @@ def request_underlying_quotes(underlyings):
                 else None
             )
 
+        def ticker_has_data(ticker):
+            if ticker is None or getattr(ticker, "modelGreeks", None) is not None:
+                return ticker is not None
+            return any(
+                isinstance(getattr(ticker, field, None), (int, float))
+                and math.isfinite(getattr(ticker, field))
+                for field in ("bid", "ask", "last", "close")
+            )
+
         spot_prices = {
             underlying: quote_price(ticker)
             for underlying, ticker in tickers.items()
@@ -336,8 +345,9 @@ def request_underlying_quotes(underlyings):
         # Keep the overlay usable for accounts without live market-data
         # permissions, while marking the returned quote as delayed.
         if any(price is None for price in spot_prices.values()):
-            for contract in valid_contracts.values():
-                ib.cancelMktData(contract)
+            for underlying, contract in valid_contracts.items():
+                if ticker_has_data(tickers.get(underlying)):
+                    ib.cancelMktData(contract)
             ib.reqMarketDataType(3)
             tickers = {
                 underlying: ib.reqMktData(contract, "104,106", False, False)
@@ -377,11 +387,15 @@ def request_underlying_quotes(underlyings):
                 "historicalVolatility": getattr(tickers.get(underlying), "histVolatility", None),
                 "impliedVolatility": getattr(tickers.get(underlying), "impliedVolatility", None)
             }
-        for contract in qualified:
-            if getattr(contract, "conId", 0):
+        for underlying, contract in valid_contracts.items():
+            if ticker_has_data(tickers.get(underlying)):
                 ib.cancelMktData(contract)
+        # reqMarketDataType is session-wide.  The option subscriptions below
+        # rely on delayed data when live option permissions are unavailable.
+        ib.reqMarketDataType(3)
         return quotes
     except Exception as error:
+        ib.reqMarketDataType(3)
         print(f"Unable to fetch underlying quotes: {error}")
         return {}
 
@@ -582,7 +596,15 @@ def greeks():
                     "premiumPrice": premium_price,
                     "premiumTrace": premium_trace
                 }
-            ib.cancelMktData(item["contract"])
+            if (
+                ticker.modelGreeks is not None
+                or any(
+                    isinstance(getattr(ticker, field, None), (int, float))
+                    and math.isfinite(getattr(ticker, field))
+                    for field in ("bid", "ask", "last", "close")
+                )
+            ):
+                ib.cancelMktData(item["contract"])
 
     # Build responses in the same order as the submitted portfolio positions.
     for pos in positions:
