@@ -143,6 +143,8 @@ def build_result(
     underlying_implied_volatility,
     historical_volatility,
     underlying_price,
+    underlying_spot_price,
+    underlying_spot_is_live,
     underlying_change,
     in_the_money,
     qty,
@@ -164,6 +166,8 @@ def build_result(
         "underlyingImpliedVolatility": underlying_implied_volatility,
         "historicalVolatility": historical_volatility,
         "underlyingPrice": underlying_price,
+        "underlyingSpotPrice": underlying_spot_price,
+        "underlyingSpotIsLive": underlying_spot_is_live,
         "underlyingChange": underlying_change,
         "inTheMoney": in_the_money,
         "positionDelta":
@@ -277,7 +281,12 @@ def greeks_are_ready(greeks):
 
 
 def request_underlying_quotes(underlyings):
-    """Fetch the previous completed daily close per ticker."""
+    """Fetch a current underlying quote plus the previous daily close.
+
+    Option model Greeks expose ``undPrice``, but that value follows the
+    market-data mode used for the option subscription and can be delayed.
+    Request the stock quote explicitly in live mode for the strike/spot bar.
+    """
     contracts = {
         underlying: Stock(
             UNDERLYINGS[underlying]["symbol"],
@@ -293,15 +302,53 @@ def request_underlying_quotes(underlyings):
 
     try:
         qualified = ib.qualifyContracts(*contracts.values())
-        tickers = {
-            underlying: ib.reqMktData(
-                contract, "104,106", False, False
-            )
+        valid_contracts = {
+            underlying: contract
             for underlying, contract in zip(contracts, qualified)
             if getattr(contract, "conId", 0)
         }
+        ib.reqMarketDataType(1)
+        tickers = {
+            underlying: ib.reqMktData(contract, "104,106", False, False)
+            for underlying, contract in valid_contracts.items()
+        }
         if tickers:
             ib.sleep(2)
+
+        def quote_price(ticker):
+            try:
+                price = ticker.marketPrice()
+            except Exception:
+                price = None
+            return (
+                float(price)
+                if isinstance(price, (int, float))
+                and math.isfinite(price)
+                and price > 0
+                else None
+            )
+
+        spot_prices = {
+            underlying: quote_price(ticker)
+            for underlying, ticker in tickers.items()
+        }
+
+        # Keep the overlay usable for accounts without live market-data
+        # permissions, while marking the returned quote as delayed.
+        if any(price is None for price in spot_prices.values()):
+            for contract in valid_contracts.values():
+                ib.cancelMktData(contract)
+            ib.reqMarketDataType(3)
+            tickers = {
+                underlying: ib.reqMktData(contract, "104,106", False, False)
+                for underlying, contract in valid_contracts.items()
+            }
+            if tickers:
+                ib.sleep(2)
+            spot_prices = {
+                underlying: quote_price(ticker)
+                for underlying, ticker in tickers.items()
+            }
 
         quotes = {}
         for underlying, contract in zip(contracts, qualified):
@@ -324,6 +371,8 @@ def request_underlying_quotes(underlyings):
                 and math.isfinite(float(bar.close))
             ]
             quotes[underlying] = {
+                "spotPrice": spot_prices.get(underlying),
+                "spotIsLive": getattr(tickers.get(underlying), "marketDataType", None) == 1,
                 "previousClose": closes[-2] if len(closes) >= 2 else (closes[-1] if closes else None),
                 "historicalVolatility": getattr(tickers.get(underlying), "histVolatility", None),
                 "impliedVolatility": getattr(tickers.get(underlying), "impliedVolatility", None)
@@ -551,10 +600,13 @@ def greeks():
         if key in cache:
             c = cache[key]
             underlying_price = c.get("underlyingPrice")
-            previous_close = underlying_quotes.get(underlying, {}).get("previousClose")
+            underlying_quote = underlying_quotes.get(underlying, {})
+            spot_price = underlying_quote.get("spotPrice")
+            previous_close = underlying_quote.get("previousClose")
+            change_price = spot_price if spot_price is not None else underlying_price
             underlying_change = (
-                underlying_price - previous_close
-                if underlying_price is not None and previous_close is not None
+                change_price - previous_close
+                if change_price is not None and previous_close is not None
                 else None
             )
             results.append(build_result(
@@ -566,6 +618,8 @@ def greeks():
                 underlying_quotes.get(underlying, {}).get("impliedVolatility"),
                 underlying_quotes.get(underlying, {}).get("historicalVolatility"),
                 underlying_price,
+                spot_price,
+                underlying_quote.get("spotIsLive", False),
                 underlying_change,
                 c.get("inTheMoney"), qty,
                 c.get("premiumPrice"), c.get("premiumTrace")

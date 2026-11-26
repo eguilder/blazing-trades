@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeGiro Greeks Overlay
 // @namespace    https://github.com/eguilder/blazing-trades
-// @version      1.5.0
+// @version      1.5.1
 // @description  Show option Greeks from local IBKR service
 // @match        https://trader.degiro.nl/trader/*
 // @grant        GM_xmlhttpRequest
@@ -833,7 +833,16 @@
 
             const ticker = g.underlying || position.underlying;
             const market = marketByTicker[ticker] || { spot: null, change: null, iv: null };
-            if (Number.isFinite(Number(g.underlyingPrice))) market.spot = Number(g.underlyingPrice);
+            // Prefer the explicit stock quote.  The option model's undPrice
+            // follows the option subscription's market-data mode and may be
+            // delayed even when the underlying stock quote is live.
+            if (Number.isFinite(Number(g.underlyingSpotPrice))) {
+                market.spot = Number(g.underlyingSpotPrice);
+                market.spotIsLive = g.underlyingSpotIsLive === true;
+            } else if (Number.isFinite(Number(g.underlyingPrice))) {
+                market.spot = Number(g.underlyingPrice);
+                market.spotIsLive = false;
+            }
             if (Number.isFinite(Number(g.underlyingChange))) market.change = Number(g.underlyingChange);
             if (Number.isFinite(Number(g.historicalVolatility))) market.hv = Number(g.historicalVolatility);
             if (Number.isFinite(Number(g.underlyingImpliedVolatility))) {

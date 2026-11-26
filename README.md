@@ -146,6 +146,11 @@ Options that IBKR identifies as in the money are outlined with a red border in t
 
 The backend batches contract qualification and market-data requests for all uncached positions, then waits once for the shared Greeks response. This avoids the previous per-position three-second delay.
 
+The strike/spot bar uses a separate IBKR stock quote request in live mode
+(`reqMarketDataType(1)`) rather than the option model's `undPrice`. A live
+IBKR market-data subscription for the underlying is required; without one,
+the service falls back to delayed data and marks the quote as delayed.
+
 ### Greeks Service Setup
 
 The script requires `greeks_service.py` to be running locally:
