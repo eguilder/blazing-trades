@@ -26,6 +26,31 @@ from typing import Iterable
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 from ib_insync import IB, Option, Stock  # noqa: E402
+import short_strangle_rules as shared_rules
+from short_strangle_rules import (
+    ALERT_DELTA,
+    CLOSE_REVIEW_DELTA,
+    ENTRY_DELTA,
+    HEDGE_MAX_CALL_DELTA,
+    LOW_DELTA_REPLACE_BELOW,
+    LOW_DELTA_TRIGGER,
+    LONG_REPOSITION_MAX_DTE,
+    LONG_REPOSITION_MIN_DTE,
+    REPLACEMENT_DELTA,
+    EARLY_REPOSITION_MAX_DTE,
+    EARLY_REPOSITION_MIN_DTE,
+    EARLY_REPOSITION_MAX_DELTA,
+    EARLY_REPOSITION_MAX_TOTAL_DELTA,
+    HEDGE_MIN_UNTESTED_DELTA,
+    HEDGE_MAX_UNTESTED_DELTA,
+    ROLL_DTE,
+    THREAT_DELTA,
+    VOL_SPIKE_RATIO,
+    RULESET_PATH,
+    configure_ruleset,
+    load_ruleset,
+    classify_position,
+)
 
 
 DEFAULT_HOST = os.getenv("IB_HOST", "127.0.0.1")
@@ -38,11 +63,26 @@ DEFAULT_CURRENCY = os.getenv("IB_OPTION_CURRENCY", "USD")
 # last available quote/model values after the regular session has closed.
 DEFAULT_MARKET_DATA_TYPE = int(os.getenv("IB_MARKET_DATA_TYPE", "4"))
 DEFAULT_WAIT = float(os.getenv("IB_STRANGLE_WAIT", "8"))
-DEFAULT_TARGET_DELTA = float(os.getenv("IB_STRANGLE_TARGET_DELTA", "0.25"))
-DEFAULT_THREAT_DELTA = float(os.getenv("IB_STRANGLE_THREAT_DELTA", "0.35"))
-DEFAULT_CLOSE_DELTA = float(os.getenv("IB_STRANGLE_CLOSE_DELTA", "0.45"))
-DEFAULT_VOL_RATIO = float(os.getenv("IB_STRANGLE_VOL_RATIO", "1.25"))
-DEFAULT_HEDGE_MAX_CALL_DELTA = float(os.getenv("IB_STRANGLE_HEDGE_MAX_CALL_DELTA", "0.35"))
+DEFAULT_TARGET_DELTA = float(os.getenv("IB_STRANGLE_TARGET_DELTA", str(REPLACEMENT_DELTA)))
+DEFAULT_THREAT_DELTA = float(os.getenv("IB_STRANGLE_THREAT_DELTA", str(THREAT_DELTA)))
+DEFAULT_CLOSE_DELTA = float(os.getenv("IB_STRANGLE_CLOSE_DELTA", str(CLOSE_REVIEW_DELTA)))
+DEFAULT_VOL_RATIO = float(os.getenv("IB_STRANGLE_VOL_RATIO", str(VOL_SPIKE_RATIO)))
+DEFAULT_HEDGE_MAX_CALL_DELTA = float(os.getenv("IB_STRANGLE_HEDGE_MAX_CALL_DELTA", str(HEDGE_MAX_CALL_DELTA)))
+RULE_CONSTANT_NAMES = (
+    "ALERT_DELTA", "CLOSE_REVIEW_DELTA", "ENTRY_DELTA", "HEDGE_MAX_CALL_DELTA",
+    "LOW_DELTA_REPLACE_BELOW", "LOW_DELTA_TRIGGER", "LONG_REPOSITION_MAX_DTE",
+    "LONG_REPOSITION_MIN_DTE", "REPLACEMENT_DELTA", "EARLY_REPOSITION_MAX_DTE",
+    "EARLY_REPOSITION_MIN_DTE", "EARLY_REPOSITION_MAX_DELTA",
+    "EARLY_REPOSITION_MAX_TOTAL_DELTA", "HEDGE_MIN_UNTESTED_DELTA",
+    "HEDGE_MAX_UNTESTED_DELTA", "ROLL_DTE", "THREAT_DELTA", "VOL_SPIKE_RATIO",
+)
+
+
+def activate_ruleset(path: str) -> dict:
+    selected = configure_ruleset(path)
+    for name in RULE_CONSTANT_NAMES:
+        globals()[name] = getattr(shared_rules, name)
+    return selected
 
 
 @dataclass
@@ -109,9 +149,15 @@ def parse_expiry(value: str) -> date:
 
 
 def parse_args() -> argparse.Namespace:
+    selection = argparse.ArgumentParser(add_help=False)
+    selection.add_argument("--ruleset", default=str(RULESET_PATH))
+    selection_args, _ = selection.parse_known_args()
+    parameters = load_ruleset(selection_args.ruleset)["parameters"]
     parser = argparse.ArgumentParser(
         description="Read-only IBKR short-strangle spot-check for portfolio option positions."
     )
+    parser.add_argument("--ruleset", default=selection_args.ruleset,
+                        help="Ruleset JSON to use (default: SHORT_STRANGLE_RULESET or repository ruleset)")
     parser.add_argument("--symbol", help="Only inspect this underlying; default is all portfolio underlyings")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -122,16 +168,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--market-data-type", type=int, choices=(1, 2, 3, 4), default=DEFAULT_MARKET_DATA_TYPE,
                         help="1 live, 2 frozen, 3 delayed, 4 delayed-frozen (default: %(default)s)")
     parser.add_argument("--wait", type=float, default=DEFAULT_WAIT, help="Seconds to wait for each model quote")
-    parser.add_argument("--target-delta", type=float, default=DEFAULT_TARGET_DELTA)
-    parser.add_argument("--threat-delta", type=float, default=DEFAULT_THREAT_DELTA)
-    parser.add_argument("--close-delta", type=float, default=DEFAULT_CLOSE_DELTA)
-    parser.add_argument("--vol-spike-ratio", type=float, default=DEFAULT_VOL_RATIO,
+    parser.add_argument("--target-delta", type=float, default=float(os.getenv("IB_STRANGLE_TARGET_DELTA", str(parameters["replacement_delta"]))))
+    parser.add_argument("--threat-delta", type=float, default=float(os.getenv("IB_STRANGLE_THREAT_DELTA", str(parameters["threat_delta"]))))
+    parser.add_argument("--close-delta", type=float, default=float(os.getenv("IB_STRANGLE_CLOSE_DELTA", str(parameters["close_review_delta"]))))
+    parser.add_argument("--vol-spike-ratio", type=float, default=float(os.getenv("IB_STRANGLE_VOL_RATIO", str(parameters["vol_spike_ratio"]))),
                         help="IV/HV ratio treated as a volatility spike")
-    parser.add_argument("--hedge-max-call-delta", type=float, default=DEFAULT_HEDGE_MAX_CALL_DELTA,
+    parser.add_argument("--hedge-max-call-delta", type=float, default=float(os.getenv("IB_STRANGLE_HEDGE_MAX_CALL_DELTA", str(parameters["hedge_max_call_delta"]))),
                         help="Upper call delta for the HEDGE alternative (default: %(default)s)")
     parser.add_argument("--risk-free-rate", type=float, default=0.05,
                         help="Annualized rate used only for the outside-hours fallback model")
-    return parser.parse_args()
+    args = parser.parse_args()
+    activate_ruleset(args.ruleset)
+    return args
 
 
 def connect(args: argparse.Namespace) -> IB:
@@ -407,82 +455,38 @@ def is_volatility_spike(legs: Iterable[Leg], historical_vol: float | None, ratio
 def decision(legs: dict[str, Leg], spot: float | None, historical_vol: float | None,
              vol_ratio: float, threat_delta: float, close_delta: float,
              hedge_max_call_delta: float = DEFAULT_HEDGE_MAX_CALL_DELTA) -> tuple[str, list[str]]:
-    active = [leg for leg in legs.values() if leg.delta is not None]
-    threatened = [leg for leg in active if abs(leg.delta) >= threat_delta]
-    breaches = [leg for leg in legs.values() if is_strike_breach(leg, spot)]
-    vol_spike = is_volatility_spike(active, historical_vol, vol_ratio)
-    severe = [leg for leg in threatened if abs(leg.delta) >= close_delta]
-    reasons = []
-    if severe and (vol_spike or breaches):
-        reasons.append("short-leg delta is at least %.2f" % close_delta)
-        if vol_spike:
-            reasons.append("implied volatility is elevated versus historical volatility")
-        if breaches:
-            reasons.append("spot has breached a short strike")
-        return "TEMPORARY_CLOSE_REVIEW", reasons
-    if not active:
-        return "HOLD", ["model delta unavailable for the short legs"]
     put = legs.get("P")
     call = legs.get("C")
-    if (
-        put is not None and call is not None
-        and put.delta is not None and call.delta is not None
-        and 0.25 < abs(call.delta) <= hedge_max_call_delta
-        and 0.20 <= abs(put.delta) <= 0.35
-        and not vol_spike
-    ):
-        return "HEDGE", [
-            "short call delta is above 0.25 but not materially elevated",
-            "untested short put is between 0.20 and 0.35 delta inclusive and IV is not spiked",
-            "buy stock to offset the short call delta instead of repositioning",
-        ]
-    abs_deltas = {leg.right: abs(leg.delta) for leg in active}
-    if (
-        len(active) == 2
-        and all(delta < 0.25 for delta in abs_deltas.values())
-        and any(delta < 0.15 for delta in abs_deltas.values())
-    ):
-        return "REPOSITION", [
-            "both short-leg deltas are below 0.25, but at least one is below 0.15",
-            "tighten only legs below 0.20 toward approximately 0.25 delta",
-        ]
-    if max(abs(leg.delta) for leg in active) < threat_delta:
-        return "HOLD", ["both short-leg deltas remain below the threat threshold"]
-    dte = next(iter(legs.values())).dte
-    max_delta = max(abs(leg.delta) for leg in active)
-    total_abs_delta = sum(abs(leg.delta) for leg in active)
-    # Avoid an early full roll when the position is only moderately stressed:
-    # at DTE 21-24, reposition if the threatened leg is 0.25-0.40 delta and
-    # the combined absolute delta remains below 0.40.
-    if (
-        20 < dte <= 24
-        and 0.25 <= max_delta < 0.40
-        and total_abs_delta < 0.40
-    ):
-        return "REPOSITION", [
-            "DTE is above 20, so repositioning is preferred over an early full roll",
-            "the threatened leg is between 0.25 and 0.40 delta and combined absolute delta is below 0.40",
-        ]
-    if dte <= 20:
-        return "ROLL", ["DTE is 20 or less and a short leg is threatened"]
-    if 28 <= dte <= 40:
-        return "REPOSITION", ["DTE is still long (28-40), so repositioning is preferred over an early full roll"]
-    if dte <= 24:
-        return "ROLL", ["DTE is 21-24 but the early-roll guard is not satisfied"]
-    return "HOLD", ["a short leg is threatened, but DTE is outside the reposition window"]
+    result = classify_position(
+        dte=next(iter(legs.values())).dte,
+        put_delta=put.delta if put else None,
+        call_delta=call.delta if call else None,
+        spot=spot,
+        put_strike=put.strike if put else None,
+        call_strike=call.strike if call else None,
+        put_iv=put.implied_volatility if put else None,
+        call_iv=call.implied_volatility if call else None,
+        historical_vol=historical_vol,
+        threat_delta=threat_delta,
+        close_review_delta=close_delta,
+        vol_spike_ratio=vol_ratio,
+        hedge_max_call_delta=hedge_max_call_delta,
+    )
+    return result.action, list(result.reasons)
 
 
 def print_rules(args: argparse.Namespace) -> None:
     print_block("RULES", [
         "Short-strangle spot check: read-only portfolio and option-chain review",
+        f"Ruleset: {args.ruleset}",
         f"Replacement strikes: absolute delta <= {args.target_delta:.2f} (default target)",
-        "DTE 40-28: reposition a threatened leg toward the replacement delta target",
-        "DTE 27-25: hold unless another higher-priority review condition applies",
-        "DTE 24-21: reposition when threatened-leg delta is 0.25-0.40 and combined absolute delta is < 0.40",
-        "DTE 20 or less: prefer a full roll when a short leg is threatened",
-        "Low-delta tightening: if both legs are < 0.25 and one is < 0.15, reposition legs < 0.20 toward 0.25",
-        f"HEDGE: call delta > 0.25 and <= {args.hedge_max_call_delta:.2f}, untested put delta >= 0.20 and <= 0.35, and no IV spike; buy stock to offset the call",
-        f"Temporary-close review: delta >= {args.close_delta:.2f} plus strike breach or IV/HV >= {args.vol_spike_ratio:.2f}x",
+        f"DTE {LONG_REPOSITION_MIN_DTE}-{LONG_REPOSITION_MAX_DTE}: reposition a threatened leg at delta >= {args.threat_delta:.2f}",
+        f"DTE {EARLY_REPOSITION_MIN_DTE}-{EARLY_REPOSITION_MAX_DTE}: reposition when threatened-leg delta >= {ALERT_DELTA:.2f} and < {EARLY_REPOSITION_MAX_DELTA:.2f}, with combined absolute delta < {EARLY_REPOSITION_MAX_TOTAL_DELTA:.2f}",
+        f"DTE {EARLY_REPOSITION_MAX_DTE + 1}-{LONG_REPOSITION_MIN_DTE - 1}: HOLD unless a higher-priority risk rule applies",
+        f"DTE {ROLL_DTE} or less: full roll takes priority over temporary-close review when a short leg is threatened",
+        f"Low-delta tightening: if both legs are < {ALERT_DELTA:.2f} and one is < {LOW_DELTA_TRIGGER:.2f}, reposition legs < {LOW_DELTA_REPLACE_BELOW:.2f} toward the replacement target",
+        f"HEDGE: call delta > {ALERT_DELTA:.2f} and <= {args.hedge_max_call_delta:.2f}, untested put delta >= {HEDGE_MIN_UNTESTED_DELTA:.2f} and <= {HEDGE_MAX_UNTESTED_DELTA:.2f}, and no IV spike; buy stock to offset the call",
+        f"Temporary-close review: delta >= {args.close_delta:.2f} and either a strike breach or IV/HV >= {args.vol_spike_ratio:.2f}x",
         "Outside-hours fallback: use IBKR spot and historical volatility for estimated deltas when option Greeks are unavailable",
     ])
 
@@ -498,7 +502,7 @@ def print_block(title: str, lines: Iterable[str]) -> None:
     print("+" + "=" * (width - 2) + "+")
 
 
-def replacement_rights(legs: dict[str, Leg], action: str, threat_delta: float) -> list[str]:
+def replacement_rights(legs: dict[str, Leg], action: str, threat_delta: float, dte: int | None = None) -> list[str]:
     if action == "ROLL":
         return ["P", "C"]
     if action != "REPOSITION":
@@ -506,10 +510,12 @@ def replacement_rights(legs: dict[str, Leg], action: str, threat_delta: float) -
     deltas = [abs(leg.delta) for leg in legs.values() if leg.delta is not None]
     if (
         len(deltas) == 2
-        and all(delta < 0.25 for delta in deltas)
-        and any(delta < 0.15 for delta in deltas)
+        and all(delta < ALERT_DELTA for delta in deltas)
+        and any(delta < LOW_DELTA_TRIGGER for delta in deltas)
     ):
-        return [right for right, leg in legs.items() if leg.delta is not None and abs(leg.delta) < 0.20]
+        return [right for right, leg in legs.items() if leg.delta is not None and abs(leg.delta) < LOW_DELTA_REPLACE_BELOW]
+    if dte is not None and EARLY_REPOSITION_MIN_DTE <= dte <= EARLY_REPOSITION_MAX_DTE:
+        return [right for right, leg in legs.items() if leg.delta is not None and abs(leg.delta) >= ALERT_DELTA]
     return [right for right, leg in legs.items() if leg.delta is not None and abs(leg.delta) >= threat_delta]
 
 
@@ -609,7 +615,7 @@ def print_group(ib: IB, symbol: str, expiry: str, legs: dict[str, Leg], args: ar
         action_lines.append(f"Suggested hedge: buy approximately {shares} shares to offset the short call delta")
 
     if action in {"ROLL", "REPOSITION"}:
-        rights_to_replace = replacement_rights(legs, action, args.threat_delta)
+        rights_to_replace = replacement_rights(legs, action, args.threat_delta, next(iter(legs.values())).dte)
         action_lines.append(f"Legs to change: {', '.join(rights_to_replace) if rights_to_replace else 'none'}")
         current_thetas = [legs[right].theta for right in rights_to_replace]
         proposed_thetas = [replacement_by_right[right].theta for right in rights_to_replace if replacement_by_right[right] is not None]
@@ -645,7 +651,7 @@ def print_group(ib: IB, symbol: str, expiry: str, legs: dict[str, Leg], args: ar
     print_block("ACTION", action_lines)
 
     if action in {"ROLL", "REPOSITION"}:
-        rights_to_replace = replacement_rights(legs, action, args.threat_delta)
+        rights_to_replace = replacement_rights(legs, action, args.threat_delta, next(iter(legs.values())).dte)
         cost_lines = ["Estimated cash flow using bid/ask mids only:"]
         total_cash_flow = 0.0
         estimate_available = True

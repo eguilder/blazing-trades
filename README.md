@@ -293,11 +293,18 @@ TWS or IB Gateway must be running with API access enabled. Use `--market-data-ty
 
 **File:** `short_strangle_spot_check.py`
 
+The strategy thresholds live in `short_strangle_rules.json`. The live spot
+check and text-mode backtester load this file through `short_strangle_rules.py`,
+which applies the common decision precedence. The HTML backtester uses the
+same JSON file selected with its **Load shared ruleset JSON** button; load
+`short_strangle_rules.json` before running it.
+
 Reads short call/put pairs from the current IBKR portfolio and prints a
 read-only indication for each underlying and expiration: `HOLD`,
 `REPOSITION`, `ROLL`, `HEDGE`, or `TEMPORARY_CLOSE_REVIEW`. It requests IBKR model
 Greeks and actual option contracts from the chain, then suggests replacement
-strikes at or below the configured target delta (0.25 by default).
+strikes at or below the configured replacement target delta (0.20 by default;
+new entries target 0.25 delta).
 
 The default market-data type is delayed-frozen (`4`), which is intended for
 use outside regular market hours. Use `--market-data-type 1` when live market
@@ -323,32 +330,74 @@ labels whether it used bid/ask mids or a last/close fallback.
 ```powershell
 py -3 .\short_strangle_spot_check.py
 py -3 .\short_strangle_spot_check.py --symbol AAPL --market-data-type 3
+py -3 .\short_strangle_spot_check.py --ruleset .\data\short_strangle_rules_custom.json
 ```
+
+Both Python scripts accept `--ruleset PATH`. To use one customized ruleset
+for repeated commands in the current PowerShell session, set
+`$env:SHORT_STRANGLE_RULESET = ".\data\short_strangle_rules_custom.json"`.
+The `--ruleset` argument takes precedence over the environment variable.
 
 Rules used by the report:
 
-- 40–28 DTE with a threatened short leg: `REPOSITION` near 0.35 delta.
-- 24–21 DTE: avoid an early full roll when the threatened leg is 0.25–0.40
-  delta and combined absolute short-leg delta is below 0.40; recommend
-  `REPOSITION` instead.
+- 28–40 DTE with a threatened short leg: `REPOSITION` at or above 0.35 delta.
+- 21–24 DTE: when the threatened leg is at least 0.25 and below 0.40 delta,
+  and combined absolute short-leg delta is below 0.40, recommend `REPOSITION`
+  instead of an early full roll.
 - 20 DTE or less with a threatened short leg: `ROLL` the full strangle into
-  the next available expiration, with replacement strikes capped at 0.25
+  the next available expiration, with replacement strikes capped at 0.20
   absolute delta by default.
-- If both short-leg deltas are below 0.25 and one is below 0.15, recommend
+- If both short-leg deltas are below 0.25 and one is below 0.10, recommend
   `REPOSITION` for legs below 0.20 to tighten them toward approximately 0.25
   delta.
 - If the short call is above 0.25 but no higher than 0.35 delta, the short put
   is the untested leg with delta between 0.20 and 0.35 inclusive, and IV is
   not spiked, recommend `HEDGE` by buying stock to offset the short call
   delta.
-- Absolute short-leg delta at least 0.45 plus a volatility spike or strike
-  breach: `TEMPORARY_CLOSE_REVIEW`.
+- Absolute short-leg delta at least 0.45 and either a volatility spike or
+  strike breach: `TEMPORARY_CLOSE_REVIEW`.
 - Otherwise: `HOLD`.
 
 The script is stateless and does not write files, send notifications, schedule
 jobs, or submit orders.
 
-# Section 6 — Realized P&L Report
+# Section 6 — Short-Strangle Daily-Bar Backtest
+
+**File:** `short_strangle_backtest.py`
+
+Runs an approximate one-year backtest from a daily OHLC CSV produced by
+`ibkr_historical.py`. It estimates option prices, deltas, and theta with
+Black-Scholes and rolling realized volatility because historical option-chain
+quotes are not included in the ticker CSV.
+
+```powershell
+py -3 .\short_strangle_backtest.py .\data\mpwr_1d.csv
+py -3 .\short_strangle_backtest.py .\data\mpwr_1d.csv --start 2025-11-04 --end 2026-11-04
+py -3 .\short_strangle_backtest.py .\data\mpwr_1d.csv --ruleset .\data\short_strangle_rules_custom.json
+```
+
+The HTML page exports customized settings as `short_strangle_rules_custom.json`
+in the same schema.
+
+The output prints alert events, every estimated option cash-flow row, hedge
+share entries/exits, and total estimated P&L. Daily bars mean fills are
+estimated at the daily close; the result is directional and comparative, not
+execution-accurate. The default ruleset opens a 45-DTE strangle near 0.25
+delta, targets at most 0.20 delta for replacement legs, repositions threatened
+legs from 0.35 delta in the 28-40 DTE window, and rolls at 20 DTE or less when
+a leg reaches the 0.25 alert delta. It also includes early-reposition, hedge,
+low-delta, and temporary-close-review conditions shared with the live spot
+check. Python scripts load the repository JSON automatically; command-line
+options can override supported defaults for individual runs. The final daily
+bar is reserved for closing positions.
+
+**HTML backtester:** `short_strangle_backtest.html` loads the same ticker CSV
+and `short_strangle_rules.json` in the browser. Select the JSON with the page
+button before running; local HTML pages cannot reliably read neighboring files
+automatically. After editing values, use **Download customized ruleset JSON**
+to save them for later use by the page or either Python script.
+
+# Section 7 — Realized P&L Report
 
 Generates a realized P&L report from a broker CSV export (e.g. DeGiro transaction history). Produces a per-product, per-month breakdown using FIFO lot matching.
 

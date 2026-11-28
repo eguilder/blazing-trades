@@ -179,6 +179,7 @@ def fetch_bars(
     chunk_days = CHUNK_DAYS_BY_MINUTES[timeframe_minutes]
     start = datetime.now(timezone.utc) - timedelta(days=365 * years)
     end = datetime.now(timezone.utc)
+    requested_end_day = end.date()
     request_times: deque[float] = deque()
     bars_by_timestamp: dict[str, Any] = {}
 
@@ -217,7 +218,22 @@ def fetch_bars(
         if pause:
             time.sleep(pause)
 
-    return [bars_by_timestamp[key] for key in sorted(bars_by_timestamp)]
+    # IBKR's duration is not always a calendar-day guarantee.  For daily bars,
+    # a request such as ``365 D`` can return roughly 365 trading candles,
+    # reaching well beyond one calendar year.  Trim the accumulated response
+    # to the exact requested calendar window before writing the CSV.
+    start_day = start.date()
+    end_day = requested_end_day
+    filtered = []
+    for key in sorted(bars_by_timestamp):
+        timestamp = key[:10]
+        try:
+            bar_day = datetime.strptime(timestamp, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if start_day <= bar_day <= end_day:
+            filtered.append(bars_by_timestamp[key])
+    return filtered
 
 
 def write_csv(path: Path, bars: list[Any]) -> None:

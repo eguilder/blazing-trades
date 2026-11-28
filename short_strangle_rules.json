@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "Short Strangle Strategy",
+  "parameters": {
+    "entry_dte": 45,
+    "entry_delta": 0.25,
+    "replacement_delta": 0.20,
+    "alert_delta": 0.25,
+    "threat_delta": 0.35,
+    "close_review_delta": 0.45,
+    "hedge_max_call_delta": 0.35,
+    "hedge_min_untested_delta": 0.20,
+    "hedge_max_untested_delta": 0.35,
+    "vol_spike_ratio": 1.25,
+    "roll_dte": 20,
+    "early_reposition_min_dte": 21,
+    "early_reposition_max_dte": 24,
+    "long_reposition_min_dte": 28,
+    "long_reposition_max_dte": 40,
+    "early_reposition_max_delta": 0.40,
+    "early_reposition_max_total_delta": 0.40,
+    "low_delta_trigger": 0.10,
+    "low_delta_replace_below": 0.20,
+    "vol_window": 30,
+    "vol_baseline_window": 60,
+    "contract_multiplier": 100,
+    "shares_per_contract": 100
+  }
+}

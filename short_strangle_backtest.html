@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Short Strangle Backtest</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+:root{font:15px system-ui;color:#17212b;background:#f3f6f9}*{box-sizing:border-box}body{margin:0;padding:24px;max-width:1440px;margin-inline:auto}h1{margin:0 0 8px}p{color:#536273}.bar,.panel{background:white;border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.field{display:grid;gap:5px}input,button{font:inherit;padding:8px;border:1px solid #bdc8d2;border-radius:6px}button{background:#175cd3;color:white;border:0;cursor:pointer}.stats{display:flex;gap:24px;flex-wrap:wrap}.stat strong{display:block;font-size:1.35rem}.tabs{display:flex;gap:8px;border-bottom:1px solid #d9e1e8}.tab{background:#e8edf2;color:#17212b;border-radius:6px 6px 0 0}.tab.active{background:#175cd3;color:white}.view{display:none}.view.active{display:block}#trades-chart,#price-chart{height:560px}#price-chart{margin-top:22px}.table-wrap{overflow:auto;max-height:70vh}.rule-editor{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:14px 0}.rule-field{display:grid;gap:4px;font-size:.9rem}.rule-field input{width:100%}.rule-field small{color:#667085;font-size:.78rem}table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{padding:8px;border-bottom:1px solid #e1e7ed;text-align:right;white-space:nowrap}th{position:sticky;top:0;background:#eef2f6}th:first-child,td:first-child,td:last-child{text-align:left}.error{color:#b42318}.muted{font-size:.9rem;color:#667085}
+</style></head>
+<body>
+<h1>Short Strangle Backtest</h1><p>Daily OHLC approximation using Black–Scholes prices and rolling realized volatility. Option PnL is realized when a leg closes; opening credits are tracked but do not count as profit until then. Select a CSV exported by <code>ibkr_historical.py</code>.</p>
+<section class="bar controls"><label class="field">Ticker data CSV<input id="file" type="file" accept=".csv,text/csv"></label><label class="field">Strike increment<input id="step" type="number" value="5" min="0.01" step="any"></label><label class="field">Risk free rate<input id="rate" type="number" value="0.05" step="0.005"></label><input id="rules-file" type="file" accept=".json,application/json" hidden><button id="load-rules" type="button">Load shared ruleset JSON</button><span id="rules-status" class="muted">Ruleset not loaded</span><button id="run">Run backtest</button><span id="status" class="muted">Choose the CSV and shared ruleset.</span></section>
+<details id="rules-summary" class="bar" hidden><summary>Edit strategy rules</summary><p class="muted">Change any parameter below, then run the backtest again to apply it.</p><p id="rule-distinction" class="muted"></p><div id="rules-editor" class="rule-editor"></div><button id="save-rules" type="button">Download customized ruleset JSON</button><ul id="rules-list"></ul></details>
+<div id="summary" class="bar stats" hidden></div>
+<nav class="tabs"><button class="tab active" data-view="chart-view">Charts</button><button class="tab" data-view="table-view">Trades table</button></nav>
+<section id="chart-view" class="panel view active"><div id="trades-chart"></div><div id="price-chart"></div></section><section id="table-view" class="panel view"><div class="table-wrap"><table><thead><tr><th>Date</th><th>Action</th><th>Leg</th><th>Expiry</th><th>Strike</th><th>Delta</th><th>TDelta</th><th>Price</th><th>Spot</th><th>CashFlow</th><th>Position PnL</th><th>Combo PnL</th><th>Note</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<script>
+let RULESET=null, RULESET_EDITED=false, ENTRY_DTE, ENTRY_DELTA, REPLACEMENT_DELTA, ALERT_DELTA, THREAT_DELTA,
+  CLOSE_REVIEW_DELTA, HEDGE_MAX_CALL_DELTA, HEDGE_MIN_UNTESTED_DELTA,
+  HEDGE_MAX_UNTESTED_DELTA, VOL_SPIKE_RATIO, ROLL_DTE,
+  EARLY_REPOSITION_MIN_DTE, EARLY_REPOSITION_MAX_DTE, LONG_REPOSITION_MIN_DTE,
+  LONG_REPOSITION_MAX_DTE, LONG_REPOSITION_DELTA, EARLY_REPOSITION_MAX_DELTA,
+  EARLY_REPOSITION_MAX_TOTAL_DELTA, LOW_DELTA_TRIGGER, LOW_DELTA_REPLACE_BELOW,
+  VOL_WINDOW, VOL_BASELINE_WINDOW, CONTRACT_MULTIPLIER, SHARES_PER_CONTRACT;
+const $=id=>document.getElementById(id),cdf=x=>.5*(1+erf(x/Math.SQRT2));function erf(x){const s=Math.sign(x),a=Math.abs(x),t=1/(1+.3275911*a);return s*(1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-a*a))}
+const REQUIRED_RULES = ['entry_dte','entry_delta','replacement_delta','alert_delta','threat_delta','close_review_delta','hedge_max_call_delta','hedge_min_untested_delta','hedge_max_untested_delta','vol_spike_ratio','roll_dte','early_reposition_min_dte','early_reposition_max_dte','long_reposition_min_dte','long_reposition_max_dte','early_reposition_max_delta','early_reposition_max_total_delta','low_delta_trigger','low_delta_replace_below','vol_window','vol_baseline_window','contract_multiplier','shares_per_contract'];
+const INTEGER_RULES = new Set(['entry_dte','roll_dte','early_reposition_min_dte','early_reposition_max_dte','long_reposition_min_dte','long_reposition_max_dte','vol_window','vol_baseline_window','contract_multiplier','shares_per_contract']);
+const RULE_LABELS = {entry_dte:'Entry duration (DTE)',entry_delta:'Entry target absolute delta',replacement_delta:'Replacement target absolute delta',alert_delta:'General action alert delta',threat_delta:'Long-DTE reposition threshold',close_review_delta:'Temporary-close delta',hedge_max_call_delta:'Hedge maximum call delta',hedge_min_untested_delta:'Hedge minimum untested-leg delta',hedge_max_untested_delta:'Hedge maximum untested-leg delta',vol_spike_ratio:'Volatility spike ratio',roll_dte:'Full-roll DTE threshold',early_reposition_min_dte:'Early reposition minimum DTE',early_reposition_max_dte:'Early reposition maximum DTE',long_reposition_min_dte:'Long reposition minimum DTE',long_reposition_max_dte:'Long reposition maximum DTE',early_reposition_max_delta:'Early reposition maximum delta',early_reposition_max_total_delta:'Early reposition maximum combined absolute delta',low_delta_trigger:'Low-delta reposition trigger',low_delta_replace_below:'Replace legs below this delta',vol_window:'Rolling volatility window (days)',vol_baseline_window:'Volatility baseline window (days)',contract_multiplier:'Option contract multiplier',shares_per_contract:'Shares per option contract'};
+function validateRuleset(data) {
+  const p = data?.parameters;
+  if (data?.schema_version !== 1 || !p) throw Error('Unsupported ruleset JSON; expected schema_version 1 and parameters.');
+  for (const key of REQUIRED_RULES) if (!Number.isFinite(p[key])) throw Error(`Ruleset is missing numeric parameter: ${key}`);
+  for (const key of INTEGER_RULES) if (!Number.isInteger(p[key]) || p[key] < 1) throw Error(`${RULE_LABELS[key]} must be a positive whole number.`);
+  const deltaRules = REQUIRED_RULES.filter(key => key.includes('delta') && key !== 'early_reposition_max_total_delta');
+  for (const key of deltaRules) if (p[key] < 0 || p[key] > 1) throw Error(`${RULE_LABELS[key]} must be between 0 and 1.`);
+  if (p.early_reposition_max_total_delta < 0 || p.early_reposition_max_total_delta > 2) throw Error('Early reposition maximum combined absolute delta must be between 0 and 2.');
+  if (p.vol_spike_ratio <= 0) throw Error('Volatility spike ratio must be greater than zero.');
+  if (p.hedge_min_untested_delta > p.hedge_max_untested_delta) throw Error('Hedge minimum untested-leg delta cannot exceed its maximum.');
+  if (p.early_reposition_min_dte > p.early_reposition_max_dte) throw Error('Early reposition minimum DTE cannot exceed its maximum.');
+  if (p.long_reposition_min_dte > p.long_reposition_max_dte) throw Error('Long reposition minimum DTE cannot exceed its maximum.');
+}
+function renderRulesEditor(data) {
+  const editor = $('rules-editor');
+  editor.replaceChildren(...Object.entries(data.parameters).map(([key, value]) => {
+    const field = document.createElement('label'); field.className = 'rule-field';
+    const label = document.createElement('span'); label.textContent = RULE_LABELS[key] || key.replaceAll('_', ' ');
+    const input = document.createElement('input'); input.type = 'number'; input.required = true; input.dataset.ruleKey = key; input.value = String(value);
+    if (INTEGER_RULES.has(key)) { input.min = '1'; input.step = '1'; }
+    else if (key === 'early_reposition_max_total_delta') { input.min = '0'; input.max = '2'; input.step = '0.01'; }
+    else if (key.includes('delta')) { input.min = '0'; input.max = '1'; input.step = '0.01'; }
+    else if (key === 'vol_spike_ratio') { input.min = '0.05'; input.step = '0.05'; }
+    else input.step = 'any';
+    const hint = document.createElement('small'); hint.textContent = key;
+    field.append(label, input, hint);
+    return field;
+  }));
+}
+function applyRuleset(data, {renderEditor = true, edited = false} = {}) {
+  validateRuleset(data);
+  const p = data.parameters;
+  ENTRY_DTE=p.entry_dte; ENTRY_DELTA=p.entry_delta; REPLACEMENT_DELTA=p.replacement_delta; ALERT_DELTA=p.alert_delta; THREAT_DELTA=p.threat_delta;
+  CLOSE_REVIEW_DELTA=p.close_review_delta; HEDGE_MAX_CALL_DELTA=p.hedge_max_call_delta; HEDGE_MIN_UNTESTED_DELTA=p.hedge_min_untested_delta; HEDGE_MAX_UNTESTED_DELTA=p.hedge_max_untested_delta;
+  VOL_SPIKE_RATIO=p.vol_spike_ratio; ROLL_DTE=p.roll_dte; EARLY_REPOSITION_MIN_DTE=p.early_reposition_min_dte; EARLY_REPOSITION_MAX_DTE=p.early_reposition_max_dte;
+  LONG_REPOSITION_MIN_DTE=p.long_reposition_min_dte; LONG_REPOSITION_MAX_DTE=p.long_reposition_max_dte; LONG_REPOSITION_DELTA=THREAT_DELTA;
+  EARLY_REPOSITION_MAX_DELTA=p.early_reposition_max_delta; EARLY_REPOSITION_MAX_TOTAL_DELTA=p.early_reposition_max_total_delta;
+  LOW_DELTA_TRIGGER=p.low_delta_trigger; LOW_DELTA_REPLACE_BELOW=p.low_delta_replace_below; VOL_WINDOW=p.vol_window; VOL_BASELINE_WINDOW=p.vol_baseline_window;
+  CONTRACT_MULTIPLIER=p.contract_multiplier; SHARES_PER_CONTRACT=p.shares_per_contract; RULESET=data;
+  if (renderEditor) { renderRulesEditor(data); $('rules-summary').open = true; RULESET_EDITED = false; }
+  else if (edited) RULESET_EDITED = true;
+  $('rule-distinction').textContent = `These are separate thresholds: the general action alert is ${ALERT_DELTA.toFixed(2)}, while the long-DTE reposition rule uses ${THREAT_DELTA.toFixed(2)} for ${LONG_REPOSITION_MIN_DTE}-${LONG_REPOSITION_MAX_DTE} DTE.`;
+  const list=[`Entry: ${ENTRY_DTE} DTE, each leg near ${ENTRY_DELTA.toFixed(2)} absolute delta`,`Replacement target: absolute delta <= ${REPLACEMENT_DELTA.toFixed(2)}`,`General action alert threshold: ${ALERT_DELTA.toFixed(2)} absolute delta (used by roll, hedge, low-delta, and early-reposition rules)`,`Full roll: DTE <= ${ROLL_DTE} with a short-leg delta >= ${ALERT_DELTA.toFixed(2)}`,`Temporary-close trigger: delta >= ${CLOSE_REVIEW_DELTA.toFixed(2)} and either a strike breach or rolling realized volatility >= baseline x ${VOL_SPIKE_RATIO.toFixed(2)}; backtest buys back both legs at the daily close, realizes PnL, and can enter again on the next eligible bar`,`HEDGE: call delta > ${ALERT_DELTA.toFixed(2)} and <= ${HEDGE_MAX_CALL_DELTA.toFixed(2)}; untested put ${HEDGE_MIN_UNTESTED_DELTA.toFixed(2)}-${HEDGE_MAX_UNTESTED_DELTA.toFixed(2)}; no rolling-volatility spike`,`Low-delta reposition: both legs < ${ALERT_DELTA.toFixed(2)}, one < ${LOW_DELTA_TRIGGER.toFixed(2)}; replace legs < ${LOW_DELTA_REPLACE_BELOW.toFixed(2)}`,`Early reposition: ${EARLY_REPOSITION_MIN_DTE}-${EARLY_REPOSITION_MAX_DTE} DTE; threatened-leg delta >= ${ALERT_DELTA.toFixed(2)} and < ${EARLY_REPOSITION_MAX_DELTA.toFixed(2)}; combined absolute delta < ${EARLY_REPOSITION_MAX_TOTAL_DELTA.toFixed(2)}`,`Long-DTE reposition: ${LONG_REPOSITION_MIN_DTE}-${LONG_REPOSITION_MAX_DTE} DTE; threatened-leg delta >= ${LONG_REPOSITION_DELTA.toFixed(2)}`,`Rolling-volatility spike: current rolling realized volatility >= baseline x ${VOL_SPIKE_RATIO.toFixed(2)}`];
+  list.push(`DTE ${EARLY_REPOSITION_MAX_DTE + 1}-${LONG_REPOSITION_MIN_DTE - 1}: HOLD unless a higher-priority risk rule applies`);
+  $('rules-list').innerHTML=list.map(x=>`<li>${x}</li>`).join(''); $('rules-summary').hidden=false; $('rules-status').textContent=`${RULESET_EDITED ? 'Edited' : 'Loaded'}: ${data.name||'Short Strangle Strategy'}`;
+}
+function updateRulesFromEditor() {
+  if (!RULESET) throw Error('Load the shared ruleset JSON first.');
+  const updated = structuredClone(RULESET);
+  let changed = false;
+  for (const input of $('rules-editor').querySelectorAll('input[data-rule-key]')) {
+    if (!input.checkValidity() || !Number.isFinite(input.valueAsNumber)) throw Error(`Enter a valid value for ${RULE_LABELS[input.dataset.ruleKey] || input.dataset.ruleKey}.`);
+    if (updated.parameters[input.dataset.ruleKey] !== input.valueAsNumber) changed = true;
+    updated.parameters[input.dataset.ruleKey] = input.valueAsNumber;
+  }
+  applyRuleset(updated, {renderEditor: false, edited: changed});
+}
+function parseCsv(text){const lines=text.trim().split(/\r?\n/),head=lines.shift().split(',').map(x=>x.trim().toLowerCase()),idx=Object.fromEntries(head.map((x,i)=>[x,i]));return lines.map(line=>{const a=line.split(',');return {day:a[idx.timestamp]?.slice(0,10),open:+a[idx.open],high:+a[idx.high],low:+a[idx.low],close:+a[idx.close]}}).filter(x=>x.day&&x.close>0).sort((a,b)=>a.day.localeCompare(b.day))}
+function bs(s,k,d,v,r,right){let t=Math.max(d,1)/365;v=Math.max(v,1e-6);let root=Math.sqrt(t),d1=(Math.log(s/k)+(r+v*v/2)*t)/(v*root),d2=d1-v*root,disc=Math.exp(-r*t),pdf=Math.exp(-d1*d1/2)/Math.sqrt(2*Math.PI),ct=-s*pdf*v/(2*root),price,delta,theta;if(right==='C'){price=s*cdf(d1)-k*disc*cdf(d2);delta=cdf(d1);theta=ct-r*k*disc*cdf(d2)}else{price=k*disc*cdf(-d2)-s*cdf(-d1);delta=cdf(d1)-1;theta=ct+r*k*disc*cdf(-d2)}return [price,delta,theta/365]}
+function rv(bars,n){if(bars.length<n+1)return null;let x=[];for(let i=bars.length-n;i<bars.length;i++)x.push(Math.log(bars[i].close/bars[i-1].close));let m=x.reduce((a,b)=>a+b,0)/x.length;return Math.sqrt(x.reduce((a,b)=>a+(b-m)**2,0)/(x.length-1)*252)}
+const dayAdd=(d,n)=>new Date(Date.parse(d+'T00:00:00Z')+n*86400000).toISOString().slice(0,10),dte=(a,b)=>(Date.parse(b)-Date.parse(a))/86400000;
+function strike(s,exp,day,v,target,right,step,rate,cap=true){let center=(right==='P'?Math.floor(s/step):Math.ceil(s/step))*step,cs=[];for(let i=0;i<=100;i++){let k=center+(right==='P'?-1:1)*step*i;if(k<=0)continue;let z=bs(s,k,dte(day,exp),v,rate,right);if(!cap||Math.abs(z[1])<=target)cs.push([Math.abs(target-Math.abs(z[1])),k,z[1]])}cs.sort((a,b)=>a[0]-b[0]);if(!cs.length)throw Error(`No ${right} strike under delta ${target}`);return cs[0].slice(1)}
+function backtest(bars,step,rate){const p=RULESET.parameters;let trades=[],legs={},expiry='',cash=0,hedgeShares=0,hedgeEntryPrice=null;for(let i=0;i<bars.length-1;i++){let b=bars[i],history=bars.slice(0,i+1),vol=rv(history,p.vol_window);if(!vol)continue;let base=rv(history,p.vol_baseline_window)||vol,spike=vol>=base*p.vol_spike_ratio;let add=(action,right,leg,opening,note)=>{let [price,delta]=bs(b.close,leg.k,dte(b.day,leg.exp),vol,rate,right),flow=price*p.contract_multiplier*(opening?1:-1);cash+=flow;const nextLegs={...legs};if(opening)nextLegs[right]=leg;else delete nextLegs[right];let tDelta=Object.entries(nextLegs).reduce((sum,[r,x])=>sum+bs(b.close,x.k,dte(b.day,x.exp),vol,rate,r)[1],0);trades.push({day:b.day,action,leg:right,expiry:leg.exp,strike:leg.k,delta,tDelta,price,spot:b.close,cashFlow:flow,note});};
+if(!legs.P){expiry=dayAdd(b.day,p.entry_dte);const newLegs={P:{k:strike(b.close,expiry,b.day,vol,p.entry_delta,'P',step,rate,false)[0],exp:expiry},C:{k:strike(b.close,expiry,b.day,vol,p.entry_delta,'C',step,rate,false)[0],exp:expiry}};legs={};for(let r of ['P','C']){legs[r]=newLegs[r];add('ENTRY',r,legs[r],true,`new ${p.entry_dte} DTE strangle`)}continue}
+let vals=Object.fromEntries(['P','C'].map(r=>[r,bs(b.close,legs[r].k,dte(b.day,expiry),vol,rate,r)[1]])),ap=Math.abs(vals.P),ac=Math.abs(vals.C),d=dte(b.day,expiry),maxDelta=Math.max(ap,ac),totalDelta=ap+ac,breach=b.close<=legs.P.k||b.close>=legs.C.k,act='',rights=[];
+if(d<=0){act='ROLL';rights=['P','C']}else if(d<=p.roll_dte&&maxDelta>=p.alert_delta){act='ROLL';rights=['P','C']}else if(maxDelta>=p.close_review_delta&&(spike||breach)){act='CLOSE';rights=['P','C']}else if(ac>p.alert_delta&&ac<=p.hedge_max_call_delta&&ap>=p.hedge_min_untested_delta&&ap<=p.hedge_max_untested_delta&&!spike){act='HEDGE'}else if(ap<p.alert_delta&&ac<p.alert_delta&&Math.min(ap,ac)<p.low_delta_trigger){act='REPOSITION';rights=['P','C'].filter(r=>Math.abs(vals[r])<p.low_delta_replace_below)}else if(d>=p.early_reposition_min_dte&&d<=p.early_reposition_max_dte&&maxDelta>=p.alert_delta&&maxDelta<p.early_reposition_max_delta&&totalDelta<p.early_reposition_max_total_delta){act='REPOSITION';rights=['P','C'].filter(r=>Math.abs(vals[r])>=p.alert_delta)}else if(d>=p.long_reposition_min_dte&&d<=p.long_reposition_max_dte&&maxDelta>=p.threat_delta){act='REPOSITION';rights=['P','C'].filter(r=>Math.abs(vals[r])>=p.threat_delta)}
+if(act==='CLOSE'){const trigger=[breach?'short strike breached':'',spike?'volatility spike':''].filter(Boolean).join(' and ');for(let r of ['P','C']){let old=legs[r];add('CLOSE',r,old,false,`temporary close after ${trigger}; short-leg delta >= ${p.close_review_delta.toFixed(2)}`);delete legs[r]}expiry='';continue}if(act==='HEDGE'){if(!hedgeShares){hedgeShares=Math.ceil(ac*p.shares_per_contract);hedgeEntryPrice=b.close;let flow=-b.close*hedgeShares;cash+=flow;trades.push({day:b.day,action:'HEDGE',leg:'STOCK',expiry:'—',strike:null,delta:null,tDelta:vals.P+vals.C,price:b.close,spot:b.close,cashFlow:flow,note:'buy stock to offset short call delta'})}continue}if(!act)continue;if(act==='ROLL'){for(let r of rights){let old=legs[r];add(act,r,old,false,'close old leg; full roll');delete legs[r]}expiry=dayAdd(b.day,p.entry_dte);legs={};for(let r of rights){legs[r]={k:strike(b.close,expiry,b.day,vol,p.replacement_delta,r,step,rate)[0],exp:expiry};add(act,r,legs[r],true,'open new expiry')}}else for(let r of rights){let old=legs[r];add(act,r,old,false,'close old leg; reposition');delete legs[r];legs[r]={k:strike(b.close,expiry,b.day,vol,p.replacement_delta,r,step,rate)[0],exp:expiry};add(act,r,legs[r],true,'open replacement')}
+}let b=bars.at(-1),vol=rv(bars,p.vol_window)||.3;for(let r of ['P','C'])if(legs[r]){let leg=legs[r],remainingDte=dte(b.day,leg.exp),price=bs(b.close,leg.k,remainingDte,vol,rate,r)[0];cash-=price*p.contract_multiplier;let tDelta=Object.entries(legs).filter(([right])=>right!==r).reduce((sum,[right,openLeg])=>sum+bs(b.close,openLeg.k,dte(b.day,openLeg.exp),vol,rate,right)[1],0);trades.push({day:b.day,action:'EXIT',leg:r,expiry:leg.exp,strike:leg.k,delta:null,tDelta,price,spot:b.close,cashFlow:-price*p.contract_multiplier,note:'end of backtest'})}if(hedgeShares&&hedgeEntryPrice!==null){let flow=b.close*hedgeShares;cash+=flow;trades.push({day:b.day,action:'HEDGE_EXIT',leg:'STOCK',expiry:'—',strike:null,delta:null,tDelta:0,price:b.close,spot:b.close,cashFlow:flow,note:'sell hedge shares at end'})}return {trades,pnl:cash,bars}}
+function render(result){let cum=0,points=[],rows=[];for(let t of result.trades){cum+=t.cashFlow;t.comboPnl=cum;t.positionPnl=t.cashFlow;let delta=t.delta==null?'—':t.delta.toFixed(3);rows.push(`<tr><td>${t.day}</td><td>${t.action}</td><td>${t.leg}</td><td>${t.expiry}</td><td>${t.strike?.toFixed(2)??'—'}</td><td>${delta}</td><td>${cum.toFixed(2)}</td><td>${t.price.toFixed(3)}</td><td>${t.spot.toFixed(2)}</td><td>${t.cashFlow.toFixed(2)}</td><td>${t.positionPnl.toFixed(2)}</td><td>${cum.toFixed(2)}</td><td>${t.note}</td></tr>`);points.push(t)}$('rows').innerHTML=rows.join('');$('summary').hidden=false;$('summary').innerHTML=`<div class="stat"><span>Estimated P&amp;L</span><strong>${result.pnl.toFixed(2)}</strong></div><div class="stat"><span>Trade rows</span><strong>${points.length}</strong></div><div class="stat"><span>Daily bars</span><strong>${result.bars.length}</strong></div><div class="stat"><span>Period</span><strong>${result.bars[0].day} – ${result.bars.at(-1).day}</strong></div>`;Plotly.newPlot('chart',[{x:points.map(t=>t.day),y:points.map(t=>t.comboPnl),customdata:points.map(t=>[t.action,t.leg,t.expiry,t.strike?.toFixed(2),t.delta?.toFixed(3)??'—',t.price.toFixed(3),t.spot.toFixed(2),t.cashFlow.toFixed(2),t.positionPnl.toFixed(2),t.comboPnl.toFixed(2),t.note]),mode:'lines+markers',type:'scatter',line:{color:'#175cd3'},marker:{size:8},hovertemplate:'<b>%{x} | %{customdata[0]} %{customdata[1]}</b><br>Expiry: %{customdata[2]}<br>Strike: %{customdata[3]}<br>Delta: %{customdata[4]}<br>Price: %{customdata[5]}<br>Spot: %{customdata[6]}<br>Trade cash flow: %{customdata[7]}<br>Position PnL: %{customdata[8]}<br>Combo PnL: %{customdata[9]}<br>%{customdata[10]}<extra></extra>'}],{title:'Estimated cumulative PnL by trade',xaxis:{title:'Trade date',type:'date',rangeslider:{visible:true}},yaxis:{title:'Cumulative PnL',zeroline:true},hovermode:'closest',margin:{l:70,r:20,t:50,b:70}},{responsive:true,scrollZoom:true,displaylogo:false});}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.view).classList.add('active');if(b.dataset.view==='chart-view'){Plotly.Plots.resize($('trades-chart'));Plotly.Plots.resize($('price-chart'))}});$('run').onclick=async()=>{try{if(!$('file').files[0])throw Error('Select an OHLC CSV first.');$('status').textContent='Reading file and calculating…';let bars=parseCsv(await $('file').files[0].text());if(bars.length<63)throw Error('At least 63 daily bars are needed for the volatility windows.');let result=backtest(bars,+$('step').value,+$('rate').value);render(result);$('status').textContent='Backtest complete.'}catch(e){$('status').innerHTML=`<span class="error">${e.message}</span>`}};
+</script>
+<script>
+const renderBacktestWithComboDelta = render;
+render = function(result) {
+  const nativeNewPlot = Plotly.newPlot;
+  try {
+    Plotly.newPlot = () => Promise.resolve();
+    renderBacktestWithComboDelta(result);
+  } finally {
+    Plotly.newPlot = nativeNewPlot;
+  }
+  const openCredits = {};
+  let comboRealizedPnl = 0;
+  let hedgeOpenCashFlow = 0;
+  document.querySelectorAll('#rows tr').forEach((row, index) => {
+    const trade = result.trades[index];
+    row.cells[6].textContent = Number.isFinite(trade.tDelta) ? trade.tDelta.toFixed(3) : '—';
+    const isOption = trade.leg === 'P' || trade.leg === 'C';
+    const isOpening = trade.action === 'ENTRY' || trade.note.toLowerCase().startsWith('open ');
+    trade.positionPnl = null;
+    if (isOption && isOpening) {
+      openCredits[trade.leg] = trade.cashFlow;
+    } else if (isOption) {
+      trade.positionPnl = (openCredits[trade.leg] || 0) + trade.cashFlow;
+      comboRealizedPnl += trade.positionPnl;
+      delete openCredits[trade.leg];
+    } else if (trade.action === 'HEDGE') {
+      hedgeOpenCashFlow += trade.cashFlow;
+    } else if (trade.action === 'HEDGE_EXIT') {
+      trade.positionPnl = hedgeOpenCashFlow + trade.cashFlow;
+      comboRealizedPnl += trade.positionPnl;
+      hedgeOpenCashFlow = 0;
+    }
+    trade.comboPnl = comboRealizedPnl;
+    row.cells[10].textContent = trade.positionPnl == null ? '' : trade.positionPnl.toFixed(2);
+    row.cells[11].textContent = comboRealizedPnl.toFixed(2);
+  });
+  const trades = result.trades;
+  const isOpeningTrade = t => t.action === 'ENTRY' || t.action === 'HEDGE' || t.note.toLowerCase().startsWith('open ');
+  const countsByDay = {};
+  const seenByDay = {};
+  trades.forEach(t => countsByDay[t.day] = (countsByDay[t.day] || 0) + 1);
+  const actualPnL = trades.map(t => t.comboPnl);
+  let yMin = Math.min(0, ...actualPnL), yMax = Math.max(0, ...actualPnL);
+  if (yMax - yMin < 1) { const middle = (yMax + yMin) / 2; yMin = middle - 0.5; yMax = middle + 0.5; }
+  const plotHeight = Math.max(220, $('trades-chart').clientHeight * 0.82);
+  const maxTradesPerDay = Math.max(1, ...Object.values(countsByDay));
+  const markerExtent = ((maxTradesPerDay - 1) / 2) * 18 + 7;
+  const yPadding = (yMax - yMin) * Math.max(0.08, markerExtent / plotHeight);
+  const yRange = [yMin - yPadding, yMax + yPadding];
+  const pixelsPerPnL = (yRange[1] - yRange[0]) / plotHeight;
+  const markerY = trades.map(t => {
+    const index = seenByDay[t.day] || 0;
+    seenByDay[t.day] = index + 1;
+    const verticalPixels = (index - (countsByDay[t.day] - 1) / 2) * 18;
+    return t.comboPnl + verticalPixels * pixelsPerPnL;
+  });
+  const hoverData = trades.map(t => [
+    t.day, t.action, t.leg, t.expiry, t.strike?.toFixed(2) ?? '—', t.delta?.toFixed(3) ?? '—',
+    t.tDelta?.toFixed(3) ?? '—', t.price.toFixed(3), t.spot.toFixed(2), t.cashFlow.toFixed(2),
+    t.positionPnl == null ? '—' : t.positionPnl.toFixed(2), t.comboPnl.toFixed(2), t.note,
+  ]);
+  const hoverTemplate = '<b>%{customdata[0]} | %{customdata[1]} %{customdata[2]}</b><br>Expiry: %{customdata[3]}<br>Strike: %{customdata[4]}<br>Delta: %{customdata[5]}<br>TDelta: %{customdata[6]}<br>Option price: %{customdata[7]}<br>Spot: %{customdata[8]}<br>CashFlow: %{customdata[9]}<br>Position PnL: %{customdata[10]}<br>Combo PnL: %{customdata[11]}<br>%{customdata[12]}<extra></extra>';
+  const positionMarks = [];
+  const activePositions = {};
+  const eventsByDay = {};
+  trades.forEach(t => (eventsByDay[t.day] ||= []).push(t));
+  for (let barIndex = 0; barIndex < result.bars.length; barIndex++) {
+    const bar = result.bars[barIndex];
+    const vol = rv(result.bars.slice(0, barIndex + 1), VOL_WINDOW) || 0.30;
+    const markedContracts = new Set();
+    const recordOpenPositions = () => {
+      const open = Object.entries(activePositions);
+      const modelValues = open.map(([right, position]) => ({right, position, values: bs(bar.close, position.strike, dte(bar.day, position.expiry), vol, +$('rate').value, right)}));
+      const comboTDelta = modelValues.reduce((sum, item) => sum + item.values[1], 0);
+      for (const item of modelValues) {
+        const {right, position, values} = item;
+        const key = `${right}|${position.strike}|${position.expiry}`;
+        if (markedContracts.has(key)) continue;
+        markedContracts.add(key);
+        positionMarks.push({day: bar.day, right, strike: position.strike, expiry: position.expiry, spot: bar.close, dte: dte(bar.day, position.expiry), price: values[0], delta: values[1], theta: values[2], volatility: vol, comboTDelta});
+      }
+    };
+    recordOpenPositions();
+    for (const trade of eventsByDay[bar.day] || []) {
+      if (trade.leg !== 'P' && trade.leg !== 'C') continue;
+      const isOpen = trade.action === 'ENTRY' || trade.note.toLowerCase().startsWith('open ');
+      if (isOpen) activePositions[trade.leg] = {strike: trade.strike, expiry: trade.expiry};
+      else delete activePositions[trade.leg];
+      recordOpenPositions();
+    }
+  }
+  const strikeHover = 'Date: %{x|%Y-%m-%d}<br>Short %{customdata[0]} strike: %{y:.2f}<br>Expiry: %{customdata[1]} (%{customdata[2]} DTE)<br>Underlying close: %{customdata[3]:.2f}<br>Model option price/share: %{customdata[4]:.3f}<br>Option model delta: %{customdata[5]:.3f}<br>Short position delta/contract: %{customdata[6]:.3f}<br>Model vol (rolling RV): %{customdata[7]:.2%}<br>Option theta/day/share: %{customdata[8]:.5f}<br>Short position theta/day/contract: %{customdata[9]:.3f}<br>Open-combo TDelta: %{customdata[10]:.3f}<extra></extra>';
+  const strikeTrace = right => {
+    const marks = positionMarks.filter(mark => mark.right === right);
+    return {x: marks.map(mark => mark.day), y: marks.map(mark => mark.strike), type: 'scatter', mode: 'markers', name: right === 'P' ? 'Open short put strikes' : 'Open short call strikes', marker: {color: right === 'P' ? '#2e90fa' : '#7a5af8', symbol: right === 'P' ? 'circle' : 'diamond', size: 9, line: {color: '#ffffff', width: 1}}, customdata: marks.map(mark => [right, mark.expiry, mark.dte, mark.spot, mark.price, mark.delta, -mark.delta, mark.volatility, mark.theta, -mark.theta * RULESET.parameters.contract_multiplier, mark.comboTDelta]), hovertemplate: strikeHover};
+  };
+  const transactionActions = new Set(['ENTRY', 'CLOSE', 'EXIT', 'ROLL', 'REPOSITION']);
+  const eventRows = trades.filter(t => transactionActions.has(t.action) && Number.isFinite(t.strike));
+  const eventCountsByDay = {};
+  const eventSeenByDay = {};
+  eventRows.forEach(t => eventCountsByDay[t.day] = (eventCountsByDay[t.day] || 0) + 1);
+  const allPriceLevels = result.bars.flatMap(b => [b.low, b.high]).concat(positionMarks.map(mark => mark.strike), eventRows.map(t => t.strike));
+  const priceSpan = Math.max(1, Math.max(...allPriceLevels) - Math.min(...allPriceLevels));
+  const eventStackStep = priceSpan * 12 / Math.max(220, $('price-chart').clientHeight - 150);
+  const eventOffset = new Map(eventRows.map(t => {
+    const index = eventSeenByDay[t.day] || 0;
+    eventSeenByDay[t.day] = index + 1;
+    return [t, (index - (eventCountsByDay[t.day] - 1) / 2) * eventStackStep];
+  }));
+  const eventHover = 'Date: %{x|%Y-%m-%d}<br>%{customdata[0]} %{customdata[1]}<br>Expiry: %{customdata[2]}<br>Strike: %{customdata[10]}<br>Option delta: %{customdata[3]}<br>Spot: %{customdata[4]}<br>Option price/share: %{customdata[5]}<br>CashFlow: %{customdata[6]}<br>Realized position PnL: %{customdata[7]}<br>Combo PnL: %{customdata[8]}<br>%{customdata[9]}<extra></extra>';
+  const eventTrace = (actions, name, color, symbol) => {
+    const marks = eventRows.filter(t => actions.includes(t.action));
+    return {x: marks.map(t => t.day), y: marks.map(t => t.strike + eventOffset.get(t)), type: 'scatter', mode: 'markers', name, marker: {color, symbol, size: 8, line: {color: color === '#fdb022' ? '#533d00' : '#ffffff', width: 1}}, customdata: marks.map(t => [t.action, t.leg, t.expiry, t.delta == null ? '—' : t.delta.toFixed(3), t.spot.toFixed(2), t.price.toFixed(3), t.cashFlow.toFixed(2), t.positionPnl == null ? '—' : t.positionPnl.toFixed(2), t.comboPnl.toFixed(2), t.note, t.strike.toFixed(2)]), hovertemplate: eventHover};
+  };
+  const tradeTraces = [
+    {x: trades.map(t => t.day), y: trades.map(t => t.comboPnl), mode: 'lines', type: 'scatter', name: 'Realized combo PnL', line: {color: '#175cd3', shape: 'hv'}, hoverinfo: 'skip'},
+    ...[true, false].map(opening => {
+      const indices = trades.map((t, i) => isOpeningTrade(t) === opening ? i : -1).filter(i => i >= 0);
+      return {x: indices.map(i => trades[i].day), y: indices.map(i => markerY[i]), customdata: indices.map(i => hoverData[i]), error_y: {type: 'data', symmetric: false, array: indices.map(i => Math.max(0, markerY[i] - trades[i].comboPnl)), arrayminus: indices.map(i => Math.max(0, trades[i].comboPnl - markerY[i])), visible: true, width: 0, thickness: 1, color: opening ? '#12a150' : '#d92d20'}, mode: 'markers', type: 'scatter', name: opening ? 'Opening trades' : 'Closing trades', marker: {color: opening ? '#12a150' : '#d92d20', size: 13, line: {color: '#ffffff', width: 1}}, hovertemplate: hoverTemplate};
+    }),
+  ];
+  const priceTraces = [
+    {x: result.bars.map(b => b.day), open: result.bars.map(b => b.open), high: result.bars.map(b => b.high), low: result.bars.map(b => b.low), close: result.bars.map(b => b.close), type: 'ohlc', name: 'Underlying daily OHLC', increasing: {line: {color: '#c5cbd2', width: 5}}, decreasing: {line: {color: '#c5cbd2', width: 5}}, whiskerwidth: 0.7, showlegend: false, hovertemplate: 'Date: %{x|%Y-%m-%d}<br>Open: %{open:.2f}<br>High: %{high:.2f}<br>Low: %{low:.2f}<br>Close: %{close:.2f}<extra></extra>'},
+    strikeTrace('P'),
+    strikeTrace('C'),
+    eventTrace(['ENTRY'], 'New opens', '#12a150', 'circle'),
+    eventTrace(['CLOSE', 'EXIT'], 'Close events', '#101828', 'circle'),
+    eventTrace(['ROLL'], 'Rolls', '#f79009', 'circle'),
+    eventTrace(['REPOSITION'], 'Repositions', '#fdb022', 'circle'),
+  ];
+  const sharedDateRange = [result.bars[0].day, result.bars.at(-1).day];
+  const tradeLayout = {title: 'Realized PnL and trades', hovermode: 'closest', hoverdistance: 45, margin: {l: 70, r: 75, t: 55, b: 55}, legend: {orientation: 'h', y: 1.12}, xaxis: {type: 'date', title: 'Trade date', range: [...sharedDateRange]}, yaxis: {title: 'Cumulative realized PnL', zeroline: true, range: yRange}};
+  const priceLayout = {title: 'Underlying OHLC and open short strikes', hovermode: 'closest', hoverdistance: 45, spikedistance: 45, margin: {l: 70, r: 75, t: 100, b: 50}, legend: {orientation: 'h', x: 0.02, y: 1.18}, xaxis: {type: 'date', title: 'Date', range: [...sharedDateRange], rangeselector: {x: 0.02, y: 1.04, yanchor: 'bottom', buttons: [{count: 1, label: '1M', step: 'month', stepmode: 'backward'}, {count: 3, label: '3M', step: 'month', stepmode: 'backward'}, {count: 6, label: '6M', step: 'month', stepmode: 'backward'}, {count: 1, label: '1Y', step: 'year', stepmode: 'backward'}, {step: 'all', label: 'All'}]}, rangeslider: {visible: true, thickness: 0.1, bgcolor: '#f2f4f7', bordercolor: '#d0d5dd', borderwidth: 1}}, yaxis: {title: 'Underlying price / strike'}};
+  Plotly.purge('trades-chart'); Plotly.purge('price-chart');
+  Promise.all([
+    Plotly.newPlot('trades-chart', tradeTraces, tradeLayout, {responsive: true, scrollZoom: true, displaylogo: false, modeBarButtonsToAdd: ['zoom2d', 'pan2d', 'resetScale2d']}),
+    Plotly.newPlot('price-chart', priceTraces, priceLayout, {responsive: true, scrollZoom: true, displaylogo: false, modeBarButtonsToAdd: ['zoom2d', 'pan2d', 'resetScale2d']})
+  ]).then(() => {
+    const tradesDiv = $('trades-chart'), priceDiv = $('price-chart');
+    let syncingDateRange = false;
+    const linkDateRanges = (source, target) => source.on('plotly_relayout', event => {
+      if (syncingDateRange) return;
+      const update = {};
+      if (event['xaxis.range']) update['xaxis.range'] = event['xaxis.range'];
+      else if (event['xaxis.range[0]'] && event['xaxis.range[1]']) update['xaxis.range'] = [event['xaxis.range[0]'], event['xaxis.range[1]']];
+      else if (event['xaxis.autorange']) update['xaxis.autorange'] = true;
+      if (!Object.keys(update).length) return;
+      syncingDateRange = true;
+      Plotly.relayout(target, update).finally(() => syncingDateRange = false);
+    });
+    linkDateRanges(priceDiv, tradesDiv);
+    linkDateRanges(tradesDiv, priceDiv);
+    let cursorX = null, cursorFrame = 0;
+    const showCursorLine = x => {
+      cursorX = x;
+      if (cursorFrame) return;
+      cursorFrame = requestAnimationFrame(() => {
+        cursorFrame = 0;
+        const shape = {type: 'line', xref: 'x', yref: 'paper', x0: cursorX, x1: cursorX, y0: 0, y1: 1, line: {color: '#667085', width: 1}};
+        const update = {shapes: [shape]};
+        Plotly.relayout(tradesDiv, update);
+        Plotly.relayout(priceDiv, update);
+      });
+    };
+    const clearCursorLine = () => {
+      if (cursorFrame) cancelAnimationFrame(cursorFrame);
+      cursorFrame = 0;
+      Plotly.relayout(tradesDiv, {shapes: []});
+      Plotly.relayout(priceDiv, {shapes: []});
+    };
+    for (const chart of [tradesDiv, priceDiv]) {
+      chart.addEventListener('pointermove', event => {
+        const dragArea = chart.querySelector('.nsewdrag');
+        const range = chart._fullLayout?.xaxis?.range;
+        if (!dragArea || !range || range.length < 2) return;
+        const rect = dragArea.getBoundingClientRect();
+        if (!rect.width || event.clientX < rect.left || event.clientX > rect.right) return;
+        const toMillis = value => typeof value === 'number' ? value : new Date(value).getTime();
+        const start = toMillis(range[0]), end = toMillis(range[1]);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+        const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        showCursorLine(new Date(start + ratio * (end - start)));
+      });
+      chart.addEventListener('pointerleave', clearCursorLine);
+    }
+  });
+};
+$('load-rules').onclick=()=>$('rules-file').click();
+$('rules-editor').addEventListener('change',()=>{try{updateRulesFromEditor();$('status').textContent='Rule values updated. Run the backtest to apply them.'}catch(error){$('rules-status').textContent=error.message;$('status').innerHTML=`<span class="error">${error.message}</span>`}});
+$('save-rules').onclick=()=>{try{updateRulesFromEditor();const file=new Blob([JSON.stringify(RULESET,null,2)+'\n'],{type:'application/json'});const url=URL.createObjectURL(file);const link=document.createElement('a');link.href=url;link.download='short_strangle_rules_custom.json';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);$('status').textContent='Customized ruleset downloaded as short_strangle_rules_custom.json.'}catch(error){$('status').innerHTML=`<span class="error">${error.message}</span>`}};
+$('rules-file').onchange=async()=>{try{const file=$('rules-file').files[0];if(!file)return;applyRuleset(JSON.parse(await file.text()));$('status').textContent='Ruleset loaded. Edit values if needed, then run the backtest.'}catch(error){RULESET=null;$('rules-editor').replaceChildren();$('rules-status').textContent='Ruleset not loaded';$('rules-summary').hidden=true;$('status').innerHTML=`<span class="error">${error.message}</span>`}};
+$('run').onclick=async()=>{try{if(!RULESET)throw Error('Load short_strangle_rules.json before running the backtest.');updateRulesFromEditor();if(!$('file').files[0])throw Error('Select an OHLC CSV first.');$('status').textContent='Reading file and calculating…';const bars=parseCsv(await $('file').files[0].text());if(bars.length<Math.max(VOL_WINDOW,VOL_BASELINE_WINDOW)+2)throw Error('Not enough daily bars for the loaded volatility windows.');const result=backtest(bars,+$('step').value,+$('rate').value);render(result);$('status').textContent='Backtest complete using '+(RULESET.name||'loaded ruleset')+'.'}catch(error){$('status').innerHTML=`<span class="error">${error.message}</span>`}};
+</script></body></html>
