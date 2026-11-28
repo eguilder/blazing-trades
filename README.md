@@ -289,7 +289,57 @@ The script automatically uses IBKR trading classes `ASL` for ASML and `ADY` for 
 
 TWS or IB Gateway must be running with API access enabled. Use `--market-data-type 1` for live data when the account has the required subscriptions. The default connection is `127.0.0.1:7496` with client id `779`; override with `--host`, `--port`, and `--client-id`.
 
-# Section 5 — Realized P&L Report
+# Section 5 — Short-Strangle Spot Check
+
+**File:** `short_strangle_spot_check.py`
+
+Reads short call/put pairs from the current IBKR portfolio and prints a
+read-only indication for each underlying and expiration: `HOLD`,
+`REPOSITION`, `ROLL`, or `TEMPORARY_CLOSE_REVIEW`. It requests IBKR model
+Greeks and actual option contracts from the chain, then suggests replacement
+strikes at or below the configured target delta (0.25 by default).
+
+The default market-data type is delayed-frozen (`4`), which is intended for
+use outside regular market hours. Use `--market-data-type 1` when live market
+data is available, or `3` for delayed data. Contract definitions and
+model Greeks must still be available through TWS/Gateway.
+
+When the market is closed and IBKR provides last option closes, spot, and
+historical volatility but no option `modelGreeks` tick, the script explicitly
+falls back to a Black-Scholes delta estimate using those IBKR values. The
+report labels this fallback so it is not confused with live option Greeks.
+
+For `ROLL` and `REPOSITION` decisions, it also estimates cash flow from valid
+bid/ask mids: buying back the current short leg is a debit and selling the
+replacement is a credit, scaled by quantity and multiplier. If IBKR does not
+provide bid and ask values for every leg, the report marks the estimate
+unavailable rather than substituting a stale close.
+
+```powershell
+py -3 .\short_strangle_spot_check.py
+py -3 .\short_strangle_spot_check.py --symbol AAPL --market-data-type 3
+```
+
+Rules used by the report:
+
+- 40–28 DTE with a threatened short leg: `REPOSITION` near 0.35 delta.
+- 24–21 DTE: avoid an early full roll when the threatened leg is 0.25–0.40
+  delta and combined absolute short-leg delta is below 0.40; recommend
+  `REPOSITION` instead.
+- 20 DTE or less with a threatened short leg: `ROLL` the full strangle into
+  the next available expiration, with replacement strikes capped at 0.25
+  absolute delta by default.
+- If both short-leg deltas are below 0.25 and one is below 0.15, recommend
+  `REPOSITION` for legs below 0.20 to tighten them toward approximately 0.25
+  delta.
+- Absolute short-leg delta at least 0.45 plus a volatility spike or strike
+  breach: `TEMPORARY_CLOSE_REVIEW`.
+- Otherwise: `HOLD`.
+
+The script is stateless and does not write files, send notifications, schedule
+jobs, or submit orders.
+
+# Section 6 — Realized P&L Report
 
 Generates a realized P&L report from a broker CSV export (e.g. DeGiro transaction history). Produces a per-product, per-month breakdown using FIFO lot matching.
 

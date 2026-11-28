@@ -139,18 +139,57 @@ def build_result(
     theta,
     gamma,
     vega,
-    implied_volatility,
-    underlying_implied_volatility,
-    historical_volatility,
-    underlying_price,
-    underlying_spot_price,
-    underlying_spot_is_live,
-    underlying_change,
-    in_the_money,
-    qty,
-    premium_price,
-    premium_trace=None
+    *values,
+    **kwargs
 ):
+
+    # Keep the helper compatible with the original positional shape:
+    # (underlying_price, in_the_money, qty, premium_price, premium_trace).
+    # The service now supplies volatility and separate spot fields as well,
+    # so its current shape is parsed explicitly below.
+    if kwargs:
+        implied_volatility = kwargs.get("implied_volatility")
+        underlying_implied_volatility = kwargs.get("underlying_implied_volatility")
+        historical_volatility = kwargs.get("historical_volatility")
+        underlying_price = kwargs.get("underlying_price")
+        underlying_spot_price = kwargs.get("underlying_spot_price")
+        underlying_spot_is_live = kwargs.get("underlying_spot_is_live", False)
+        underlying_change = kwargs.get("underlying_change")
+        in_the_money = kwargs.get("in_the_money")
+        qty = kwargs.get("qty", 1)
+        premium_price = kwargs.get("premium_price")
+        premium_trace = kwargs.get("premium_trace")
+    elif len(values) <= 5:
+        implied_volatility = None
+        underlying_implied_volatility = None
+        historical_volatility = None
+        underlying_price = values[0] if len(values) > 0 else None
+        underlying_spot_price = None
+        underlying_spot_is_live = False
+        underlying_change = None
+        in_the_money = values[1] if len(values) > 1 else None
+        qty = values[2] if len(values) > 2 else 1
+        premium_price = values[3] if len(values) > 3 else None
+        premium_trace = values[4] if len(values) > 4 else None
+    elif len(values) == 11:
+        (
+            implied_volatility,
+            underlying_implied_volatility,
+            historical_volatility,
+            underlying_price,
+            underlying_spot_price,
+            underlying_spot_is_live,
+            underlying_change,
+            in_the_money,
+            qty,
+            premium_price,
+            premium_trace,
+        ) = values
+    else:
+        raise TypeError(
+            "build_result expects either the legacy five-value tail or "
+            "the current eleven-value tail"
+        )
 
     return {
         "rowId": row_id,
