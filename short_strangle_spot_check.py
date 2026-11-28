@@ -3,7 +3,7 @@
 
 The script reads option positions from the connected IBKR account, requests
 model Greeks for the current short legs and nearby chain contracts, and prints
-one of HOLD, REPOSITION, ROLL, or TEMPORARY_CLOSE_REVIEW.  It never submits
+one of HOLD, REPOSITION, ROLL, HEDGE, or TEMPORARY_CLOSE_REVIEW.  It never submits
 orders and writes no files.
 
 Delayed or delayed-frozen market data can be selected, so the report can also
@@ -42,6 +42,7 @@ DEFAULT_TARGET_DELTA = float(os.getenv("IB_STRANGLE_TARGET_DELTA", "0.25"))
 DEFAULT_THREAT_DELTA = float(os.getenv("IB_STRANGLE_THREAT_DELTA", "0.35"))
 DEFAULT_CLOSE_DELTA = float(os.getenv("IB_STRANGLE_CLOSE_DELTA", "0.45"))
 DEFAULT_VOL_RATIO = float(os.getenv("IB_STRANGLE_VOL_RATIO", "1.25"))
+DEFAULT_HEDGE_MAX_CALL_DELTA = float(os.getenv("IB_STRANGLE_HEDGE_MAX_CALL_DELTA", "0.35"))
 
 
 @dataclass
@@ -84,6 +85,7 @@ class ChainQuote:
     theta: float | None
     implied_volatility: float | None
     mid_price: float | None = None
+    quote_price: float | None = None
 
     @property
     def abs_delta(self) -> float | None:
@@ -125,6 +127,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--close-delta", type=float, default=DEFAULT_CLOSE_DELTA)
     parser.add_argument("--vol-spike-ratio", type=float, default=DEFAULT_VOL_RATIO,
                         help="IV/HV ratio treated as a volatility spike")
+    parser.add_argument("--hedge-max-call-delta", type=float, default=DEFAULT_HEDGE_MAX_CALL_DELTA,
+                        help="Upper call delta for the HEDGE alternative (default: %(default)s)")
     parser.add_argument("--risk-free-rate", type=float, default=0.05,
                         help="Annualized rate used only for the outside-hours fallback model")
     return parser.parse_args()
@@ -242,6 +246,14 @@ def bid_ask_mid(ticker: object) -> float | None:
     return None
 
 
+def implied_move_limits(spot: float | None, put_price: float | None,
+                        call_price: float | None) -> tuple[float, float] | None:
+    if spot is None or put_price is None or call_price is None:
+        return None
+    width = put_price + call_price
+    return spot - width, spot + width
+
+
 def request_model(ib: IB, contract: object, wait: float, exchange: str) -> tuple[object | None, float | None, float | None]:
     requested = market_contract(contract, exchange)
     # Explicitly ask for option quote/IV ticks.  This is important for
@@ -353,6 +365,7 @@ def chain_quotes(ib: IB, contracts: list[object], wait: float, exchange: str,
                 ),
                 implied_volatility=implied_volatility,
                 mid_price=bid_ask_mid(ticker),
+                quote_price=next((float(v) for v in ticker_values(ticker) if valid_number(v) and float(v) >= 0), None),
             ))
         return quotes
     finally:
@@ -392,7 +405,8 @@ def is_volatility_spike(legs: Iterable[Leg], historical_vol: float | None, ratio
 
 
 def decision(legs: dict[str, Leg], spot: float | None, historical_vol: float | None,
-             vol_ratio: float, threat_delta: float, close_delta: float) -> tuple[str, list[str]]:
+             vol_ratio: float, threat_delta: float, close_delta: float,
+             hedge_max_call_delta: float = DEFAULT_HEDGE_MAX_CALL_DELTA) -> tuple[str, list[str]]:
     active = [leg for leg in legs.values() if leg.delta is not None]
     threatened = [leg for leg in active if abs(leg.delta) >= threat_delta]
     breaches = [leg for leg in legs.values() if is_strike_breach(leg, spot)]
@@ -408,6 +422,20 @@ def decision(legs: dict[str, Leg], spot: float | None, historical_vol: float | N
         return "TEMPORARY_CLOSE_REVIEW", reasons
     if not active:
         return "HOLD", ["model delta unavailable for the short legs"]
+    put = legs.get("P")
+    call = legs.get("C")
+    if (
+        put is not None and call is not None
+        and put.delta is not None and call.delta is not None
+        and 0.25 < abs(call.delta) <= hedge_max_call_delta
+        and 0.20 <= abs(put.delta) <= 0.35
+        and not vol_spike
+    ):
+        return "HEDGE", [
+            "short call delta is above 0.25 but not materially elevated",
+            "untested short put is between 0.20 and 0.35 delta inclusive and IV is not spiked",
+            "buy stock to offset the short call delta instead of repositioning",
+        ]
     abs_deltas = {leg.right: abs(leg.delta) for leg in active}
     if (
         len(active) == 2
@@ -453,6 +481,7 @@ def print_rules(args: argparse.Namespace) -> None:
         "DTE 24-21: reposition when threatened-leg delta is 0.25-0.40 and combined absolute delta is < 0.40",
         "DTE 20 or less: prefer a full roll when a short leg is threatened",
         "Low-delta tightening: if both legs are < 0.25 and one is < 0.15, reposition legs < 0.20 toward 0.25",
+        f"HEDGE: call delta > 0.25 and <= {args.hedge_max_call_delta:.2f}, untested put delta >= 0.20 and <= 0.35, and no IV spike; buy stock to offset the call",
         f"Temporary-close review: delta >= {args.close_delta:.2f} plus strike breach or IV/HV >= {args.vol_spike_ratio:.2f}x",
         "Outside-hours fallback: use IBKR spot and historical volatility for estimated deltas when option Greeks are unavailable",
     ])
@@ -505,11 +534,13 @@ def print_group(ib: IB, symbol: str, expiry: str, legs: dict[str, Leg], args: ar
         leg.underlying_price = float(greeks.undPrice) if greeks is not None and valid_number(getattr(greeks, "undPrice", None)) else spot
         leg.premium = premium
         leg.mid_price = mid_price
-    action, reasons = decision(legs, spot, historical_vol, args.vol_spike_ratio, args.threat_delta, args.close_delta)
+    action, reasons = decision(
+        legs, spot, historical_vol, args.vol_spike_ratio, args.threat_delta,
+        args.close_delta, args.hedge_max_call_delta
+    )
     action_lines = [
         f"Decision: {action} | {symbol} {expiry} | {next(iter(legs.values())).dte} DTE",
         f"Spot: {spot:.2f}" if spot is not None else "Spot: unavailable",
-        f"Historical volatility: {historical_vol:.4f}" if historical_vol is not None else "Historical volatility: unavailable",
     ]
     if not ibkr_greeks_available:
         action_lines.append("Note: IBKR option Greeks unavailable; deltas/IV use an outside-hours historical-volatility estimate.")
@@ -547,21 +578,36 @@ def print_group(ib: IB, symbol: str, expiry: str, legs: dict[str, Leg], args: ar
             historical_vol,
             args.risk_free_rate,
         )
-    for right in ("P", "C"):
-        replacement = nearest_delta(replacement_quotes, right, args.target_delta)
-        if replacement is not None:
-            suggestion = f"Suggested {right}: {float(replacement.contract.strike):g} ({replacement_label}, |delta| {replacement.abs_delta:.3f})"
-            if action in {"ROLL", "REPOSITION"}:
-                replacement_theta = f"{replacement.theta:.4f}" if replacement.theta is not None else "n/a"
-                suggestion += f", theta/day {replacement_theta}"
-            action_lines.append(suggestion)
-        else:
-            action_lines.append(f"Suggested {right}: unavailable (no chain contract at or below |delta| {args.target_delta:.2f})")
-
     replacement_by_right = {
         right: nearest_delta(replacement_quotes, right, args.target_delta)
         for right in ("P", "C")
     }
+    current_prices = {
+        right: (legs[right].mid_price if legs[right].mid_price is not None else legs[right].premium)
+        for right in ("P", "C")
+    }
+    current_limits = implied_move_limits(spot, current_prices["P"], current_prices["C"])
+    current_source = "bid/ask mids" if all(legs[right].mid_price is not None for right in ("P", "C")) else "mid/last/close fallback"
+    if current_limits is not None:
+        action_lines.append(f"Current implied move limits ({current_source}): {current_limits[0]:.2f} to {current_limits[1]:.2f}")
+    else:
+        action_lines.append("Current implied move limits: unavailable")
+    if action in {"ROLL", "REPOSITION"}:
+        for right in ("P", "C"):
+            replacement = replacement_by_right[right]
+            if replacement is not None:
+                suggestion = f"Suggested {right}: {float(replacement.contract.strike):g} ({replacement_label}, |delta| {replacement.abs_delta:.3f})"
+                replacement_theta = f"{replacement.theta:.4f}" if replacement.theta is not None else "n/a"
+                suggestion += f", theta/day {replacement_theta}"
+                action_lines.append(suggestion)
+            else:
+                action_lines.append(f"Suggested {right}: unavailable (no chain contract at or below |delta| {args.target_delta:.2f})")
+    elif action == "HEDGE":
+        call = legs["C"]
+        multiplier = int(getattr(call.contract, "multiplier", 100) or 100)
+        shares = math.ceil(abs(call.delta) * abs(call.quantity) * multiplier)
+        action_lines.append(f"Suggested hedge: buy approximately {shares} shares to offset the short call delta")
+
     if action in {"ROLL", "REPOSITION"}:
         rights_to_replace = replacement_rights(legs, action, args.threat_delta)
         action_lines.append(f"Legs to change: {', '.join(rights_to_replace) if rights_to_replace else 'none'}")
@@ -577,6 +623,25 @@ def print_group(ib: IB, symbol: str, expiry: str, legs: dict[str, Leg], args: ar
             f"Proposed theta sum/day: {proposed_theta_sum:.4f}" if proposed_theta_sum is not None
             else "Proposed theta sum/day: unavailable"
         )
+        proposed_prices = {}
+        proposed_source_is_mid = True
+        for right in ("P", "C"):
+            replacement = replacement_by_right[right]
+            if right in rights_to_replace:
+                proposed_prices[right] = (
+                    replacement.mid_price if replacement is not None and replacement.mid_price is not None
+                    else (replacement.quote_price if replacement is not None else None)
+                )
+                proposed_source_is_mid = proposed_source_is_mid and replacement is not None and replacement.mid_price is not None
+            else:
+                proposed_prices[right] = current_prices[right]
+                proposed_source_is_mid = proposed_source_is_mid and legs[right].mid_price is not None
+        proposed_limits = implied_move_limits(spot, proposed_prices["P"], proposed_prices["C"])
+        proposed_source = "bid/ask mids" if proposed_source_is_mid else "mid/last/close fallback"
+        if proposed_limits is not None:
+            action_lines.append(f"Proposed implied move limits ({proposed_source}): {proposed_limits[0]:.2f} to {proposed_limits[1]:.2f}")
+        else:
+            action_lines.append("Proposed implied move limits: unavailable")
     print_block("ACTION", action_lines)
 
     if action in {"ROLL", "REPOSITION"}:
@@ -606,6 +671,13 @@ def print_group(ib: IB, symbol: str, expiry: str, legs: dict[str, Leg], args: ar
             cost_lines.append(f"Net estimated {label}: {abs(total_cash_flow):,.2f} (contract currency)")
         else:
             cost_lines.append("Net estimate unavailable: IBKR did not provide bid/ask mids for every leg.")
+    elif action == "HEDGE":
+        call = legs["C"]
+        shares = math.ceil(abs(call.delta) * abs(call.quantity) * int(getattr(call.contract, "multiplier", 100) or 100))
+        if spot is not None:
+            cost_lines = [f"Stock hedge notional: approximately {shares} shares x {spot:.2f} = {shares * spot:,.2f} (contract currency)"]
+        else:
+            cost_lines = [f"Stock hedge size: approximately {shares} shares; notional unavailable without spot"]
     else:
         cost_lines = ["No roll or reposition cost applies to this decision."]
     print_block("COST", cost_lines)

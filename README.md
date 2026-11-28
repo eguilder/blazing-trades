@@ -295,7 +295,7 @@ TWS or IB Gateway must be running with API access enabled. Use `--market-data-ty
 
 Reads short call/put pairs from the current IBKR portfolio and prints a
 read-only indication for each underlying and expiration: `HOLD`,
-`REPOSITION`, `ROLL`, or `TEMPORARY_CLOSE_REVIEW`. It requests IBKR model
+`REPOSITION`, `ROLL`, `HEDGE`, or `TEMPORARY_CLOSE_REVIEW`. It requests IBKR model
 Greeks and actual option contracts from the chain, then suggests replacement
 strikes at or below the configured target delta (0.25 by default).
 
@@ -315,6 +315,11 @@ replacement is a credit, scaled by quantity and multiplier. If IBKR does not
 provide bid and ask values for every leg, the report marks the estimate
 unavailable rather than substituting a stale close.
 
+The action report also shows implied-move price limits for the current
+strangle and, when applicable, the proposed strangle. These are calculated as
+spot plus or minus the combined put and call premium; outside hours the report
+labels whether it used bid/ask mids or a last/close fallback.
+
 ```powershell
 py -3 .\short_strangle_spot_check.py
 py -3 .\short_strangle_spot_check.py --symbol AAPL --market-data-type 3
@@ -331,6 +336,10 @@ Rules used by the report:
   absolute delta by default.
 - If both short-leg deltas are below 0.25 and one is below 0.15, recommend
   `REPOSITION` for legs below 0.20 to tighten them toward approximately 0.25
+  delta.
+- If the short call is above 0.25 but no higher than 0.35 delta, the short put
+  is the untested leg with delta between 0.20 and 0.35 inclusive, and IV is
+  not spiked, recommend `HEDGE` by buying stock to offset the short call
   delta.
 - Absolute short-leg delta at least 0.45 plus a volatility spike or strike
   breach: `TEMPORARY_CLOSE_REVIEW`.

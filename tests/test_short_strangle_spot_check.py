@@ -6,6 +6,7 @@ from short_strangle_spot_check import (
     Leg,
     decision,
     estimated_delta,
+    implied_move_limits,
     nearest_delta,
     group_legs,
     is_strike_breach,
@@ -51,6 +52,13 @@ class ShortStrangleDecisionTests(unittest.TestCase):
         self.assertEqual(action, "REPOSITION")
         self.assertTrue(any("tighten only legs" in reason for reason in reasons))
 
+    def test_hedge_is_available_for_moderately_threatened_call(self):
+        expiry = (date.today() + timedelta(days=30)).strftime("%Y%m%d")
+        legs = {"P": leg("P", 90, delta=-0.22, expiry=expiry), "C": leg("C", 110, delta=0.30, expiry=expiry, iv=0.30)}
+        action, reasons = decision(legs, 100, 0.30, 1.25, 0.35, 0.45, 0.35)
+        self.assertEqual(action, "HEDGE")
+        self.assertTrue(any("buy stock" in reason for reason in reasons))
+
     def test_close_review_precedes_roll(self):
         legs = {"P": leg("P", 105, expiry="20261201", delta=-0.50, iv=0.60), "C": leg("C", 110, expiry="20261201", delta=0.20, iv=0.30)}
         action, reasons = decision(legs, 100, 0.30, 1.25, 0.35, 0.45)
@@ -76,6 +84,9 @@ class ShortStrangleDecisionTests(unittest.TestCase):
         selected = nearest_delta(quotes, "C", 0.25)
         self.assertEqual(selected.contract.strike, 1400)
         self.assertIsNone(nearest_delta(quotes[:1], "C", 0.25))
+
+    def test_implied_move_limits_use_strangle_premium(self):
+        self.assertEqual(implied_move_limits(100, 2.0, 3.0), (95.0, 105.0))
 
     def test_group_only_short_legs(self):
         positions = [
